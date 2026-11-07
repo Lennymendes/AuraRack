@@ -35,7 +35,7 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (145 paramètres), textes qui suivent le module du slot |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (56 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (57 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
 
 ## Architecture audio
@@ -108,7 +108,7 @@ la propriété est conservée.
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 56 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
+`aurarack_dsp_test` (sans JUCE, 57 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).

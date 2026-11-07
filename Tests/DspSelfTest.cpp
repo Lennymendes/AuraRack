@@ -695,6 +695,13 @@ static void testEngine()
     }
 
     {
+        // Valeur normalisée arrivée en float depuis l'hôte : 0 dB reste exactement 0 dB.
+        const auto& spec = AuraEQ::info().params[AuraEQ::outGain];
+        const double drifted = spec.toPlain ((double) (0.5f - 6.0e-8f));
+        check (drifted == 0.0, "Paramètre « 0 dB » reçu à 1e-7 près : exactement 0 dB", drifted, "dB");
+    }
+
+    {
         // Ordre : empaquetage et validation.
         const SlotOrder o { 9, 3, 1, 0, 2, 4, 8, 7, 6, 5 };
         check (RackRouting::unpack (RackRouting::pack (o)) == o, "Ordre empaqueté sur 64 bits (aller-retour)", 0.0);

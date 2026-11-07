@@ -41,7 +41,11 @@ struct ParamSpec
             case Scale::choice:      return std::round (norm * (numChoices - 1));
             case Scale::linear:      break;
         }
-        return minValue + norm * (maxValue - minValue);
+        // Les hôtes transmettent les valeurs normalisées en float : un « 0 dB » peut arriver à -3 µdB.
+        // À moins d'un millionième de la course de zéro, la valeur vaut exactement zéro : un gain neutre
+        // reste bit-transparent et une bande d'EQ à 0 dB reste court-circuitée.
+        const double plain = minValue + norm * (maxValue - minValue);
+        return std::abs (plain) < 1.0e-6 * (maxValue - minValue) ? 0.0 : plain;
     }
 
     /** Valeur physique -> valeur normalisée [0, 1]. */
