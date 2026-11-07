@@ -132,7 +132,16 @@ int main (int argc, char** argv)
     for (std::size_t i = 0; i < L.size(); ++i) if (std::abs (L[i]) > std::abs (L[peakAt])) peakAt = i;
     const double atLatency = L[(std::size_t) (1000 + latency)];
     if (std::abs (atLatency - 0.25) >= 1e-12)
+    {
         std::printf ("    valeur = %.17g, pic à l'échantillon %zu (%.17g), attendu %d\n", atLatency, peakAt, L[peakAt], 1000 + latency);
+        for (std::size_t i = peakAt - 3; i <= peakAt + 3; ++i) std::printf ("      L[%zu] = %.17g   R = %.17g\n", i, L[i], R[i]);
+        for (auto* param : plugin->getParameters())
+        {
+            const auto name = param->getName (64);
+            if (name.startsWith ("Slot 1") || name.startsWith ("Slot 2") || ! name.startsWith ("Slot"))
+                std::printf ("      %-22s %.9g  (%s)\n", name.toRawUTF8(), (double) param->getValue(), param->getCurrentValueAsText().toRawUTF8());
+        }
+    }
     check (std::abs (atLatency - 0.25) < 1e-12, "Impulsion 64 bits intacte, à la latence annoncée", atLatency);
 
     // Slot 3 = AuraDuck (Dynamic EQ, clé = bus Sidechain) : un kick sur le Sidechain baisse le sub.
