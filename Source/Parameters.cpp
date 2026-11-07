@@ -9,7 +9,9 @@ namespace
     juce::String formatDb (float v, int)        { return juce::String (v, 1) + " dB"; }
     juce::String formatPercent (float v, int)   { return juce::String (juce::roundToInt (v)) + " %"; }
 
-    juce::NormalisableRange<float> trimRange()  { return { -24.0f, 24.0f, 0.01f }; }
+    // Pas de quantification (interval 0) : -24 + 48·0,5 vaut exactement 0, même quand le compilateur fusionne le
+    // calcul en FMA (arm64). Avec un pas de 0,01, JUCE calculait -24 + 0,01f·2400 = -5,4e-7 dB sur Apple Silicon.
+    juce::NormalisableRange<float> trimRange()  { return { -24.0f, 24.0f }; }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout (SlotTypeProvider slotType)
@@ -23,7 +25,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (SlotTypeProvid
                                                              AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction (formatDb)));
     global->addChild (std::make_unique<AudioParameterFloat> (ParameterID { outGain, 1 }, "Output Gain", trimRange(), 0.0f,
                                                              AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction (formatDb)));
-    global->addChild (std::make_unique<AudioParameterFloat> (ParameterID { masterMix, 1 }, "Master Mix", NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f,
+    global->addChild (std::make_unique<AudioParameterFloat> (ParameterID { masterMix, 1 }, "Master Mix", NormalisableRange<float> (0.0f, 100.0f), 100.0f,
                                                              AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (formatPercent)));
     global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { scSource, 1 }, "Sidechain Source",
                                                               StringArray { "Bus Sidechain", "Entree du rack" }, 0));
@@ -42,7 +44,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (SlotTypeProvid
         group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { type (s), 1 }, n + " Type", typeNames, 0,
                                                                  AudioParameterChoiceAttributes().withAutomatable (false)));
         group->addChild (std::make_unique<AudioParameterBool> (ParameterID { bypass (s), 1 }, n + " Bypass", false));
-        group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { mix (s), 1 }, n + " Mix", NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f,
+        group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { mix (s), 1 }, n + " Mix", NormalisableRange<float> (0.0f, 100.0f), 100.0f,
                                                                 AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (formatPercent)));
         group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { inTrim (s), 1 }, n + " In Trim", trimRange(), 0.0f,
                                                                 AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction (formatDb)));

@@ -141,9 +141,9 @@ void RackEngine::prepare (double newSampleRate, int /*maxBlockSize : traité par
         const bool bypassed = readOr (s.sources.bypass, 0.0f) >= 0.5f;
         s.active.reset (bypassed ? 0.0 : 1.0);
         s.swap.reset (1.0);
-        s.mix.reset (std::clamp (readOr (s.sources.mix, 100.0f) / 100.0, 0.0, 1.0));
-        s.inTrim.reset (dsp::dbToGain (readOr (s.sources.inTrim, 0.0f)));
-        s.outTrim.reset (dsp::dbToGain (readOr (s.sources.outTrim, 0.0f)));
+        s.mix.reset (proportionFromPercent (readOr (s.sources.mix, 100.0f)));
+        s.inTrim.reset (gainFromDb (readOr (s.sources.inTrim, 0.0f)));
+        s.outTrim.reset (gainFromDb (readOr (s.sources.outTrim, 0.0f)));
         s.paramsDirty = true;
         s.wasBypassed = false;
 
@@ -155,9 +155,9 @@ void RackEngine::prepare (double newSampleRate, int /*maxBlockSize : traité par
     inputGain.prepare (sampleRate, 20.0);
     outputGain.prepare (sampleRate, 20.0);
     masterMix.prepare (sampleRate, 20.0);
-    inputGain.reset (dsp::dbToGain (readOr (globals.inputGain, 0.0f)));
-    outputGain.reset (dsp::dbToGain (readOr (globals.outputGain, 0.0f)));
-    masterMix.reset (std::clamp (readOr (globals.masterMix, 100.0f) / 100.0, 0.0, 1.0));
+    inputGain.reset (gainFromDb (readOr (globals.inputGain, 0.0f)));
+    outputGain.reset (gainFromDb (readOr (globals.outputGain, 0.0f)));
+    masterMix.reset (proportionFromPercent (readOr (globals.masterMix, 100.0f)));
 
     masterDry.prepare (sampleRate, kNumSlots * maxModuleLatencySamples);
     masterDry.setLatency (totalLatency);
@@ -319,9 +319,9 @@ void RackEngine::processChunk (double* L, double* R, int n, const double* scL, c
     meters.activeLatency.store (totalLatency, std::memory_order_relaxed);
 
     // 2. Gain d'entrée, copie de l'entrée du rack (Dry maître, clé « entrée du rack »).
-    inputGain.setTarget (dsp::dbToGain (readOr (globals.inputGain, 0.0f)));
-    outputGain.setTarget (dsp::dbToGain (readOr (globals.outputGain, 0.0f)));
-    masterMix.setTarget (std::clamp (readOr (globals.masterMix, 100.0f) / 100.0, 0.0, 1.0));
+    inputGain.setTarget (gainFromDb (readOr (globals.inputGain, 0.0f)));
+    outputGain.setTarget (gainFromDb (readOr (globals.outputGain, 0.0f)));
+    masterMix.setTarget (proportionFromPercent (readOr (globals.masterMix, 100.0f)));
 
     double peakInL = 0.0, peakInR = 0.0;
     for (int i = 0; i < n; ++i)
@@ -425,9 +425,9 @@ void RackEngine::applyModuleParameters (Slot& s) noexcept
 void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int n, const SidechainBlock& key) noexcept
 {
     s.active.setTarget (readOr (s.sources.bypass, 0.0f) >= 0.5f ? 0.0 : 1.0);
-    s.mix.setTarget (std::clamp (readOr (s.sources.mix, 100.0f) / 100.0, 0.0, 1.0));
-    s.inTrim.setTarget (dsp::dbToGain (readOr (s.sources.inTrim, 0.0f)));
-    s.outTrim.setTarget (dsp::dbToGain (readOr (s.sources.outTrim, 0.0f)));
+    s.mix.setTarget (proportionFromPercent (readOr (s.sources.mix, 100.0f)));
+    s.inTrim.setTarget (gainFromDb (readOr (s.sources.inTrim, 0.0f)));
+    s.outTrim.setTarget (gainFromDb (readOr (s.sources.outTrim, 0.0f)));
     applyModuleParameters (s);
 
     // Entrée brute retardée de la latence du module : chemin Dry du Mix et chemin Bypass, toujours alignés.

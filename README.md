@@ -77,7 +77,9 @@ x ──► Dry compensé (retard = latence du module, fondu 5 ms si elle change
   module n'est plus calculé (CPU) ; à la réactivation il repart d'un état propre (`reset()` en O(1)), masqué par le fondu.
 - **Mix 0–100 %** : le Dry est retardé de la latence exacte du module. Avec Limit à Mix 50 % et Master Mix 50 %, une
   impulsion ressort **unique, d'amplitude exacte** (0,25 → 0,25), à la latence annoncée.
-- **Trims** −24 / +24 dB, lissés en 20 ms.
+- **Trims** −24 / +24 dB, lissés en 20 ms. Un gain à moins de 1e-5 dB de 0 dB vaut exactement 1, un Mix à moins de
+  1e-5 des bornes vaut exactement 0 ou 100 % : les arrondis float des hôtes (et le FMA d'Apple Silicon) ne cassent
+  pas la transparence bit pour bit.
 - La latence d'un slot est conservée en bypass : la latence du plugin ne change qu'au changement de module
   (`setLatencySamples` depuis le message thread).
 

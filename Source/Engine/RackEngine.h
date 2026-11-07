@@ -207,6 +207,19 @@ private:
         return p != nullptr ? p->load (std::memory_order_relaxed) : fallback;
     }
 
+    /** Gain d'un paramètre en dB ; à moins de 1e-5 dB de 0, exactement 1 (valeurs de l'hôte arrondies en float). */
+    static double gainFromDb (float db) noexcept
+    {
+        return std::abs (db) < 1.0e-5f ? 1.0 : dsp::dbToGain ((double) db);
+    }
+
+    /** Proportion d'un paramètre en % ; à moins de 1e-5 des bornes, exactement 0 ou 1. */
+    static double proportionFromPercent (float percent) noexcept
+    {
+        const double v = std::clamp ((double) percent / 100.0, 0.0, 1.0);
+        return v > 1.0 - 1.0e-5 ? 1.0 : (v < 1.0e-5 ? 0.0 : v);
+    }
+
     // FIFO SPSC audio -> message thread des modules à détruire.
     static constexpr std::size_t kGarbageCapacity = 64;
     std::array<ModuleBox*, kGarbageCapacity> garbage {};
