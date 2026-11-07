@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS
+          - os: windows-latest
+            name: Windows
+          - os: ubuntu-24.04
+            name: Linux
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+                                  libxext-dev libfreetype-dev libfontconfig1-dev
+
+      - name: Configuration (JUCE 8.0.15 téléchargé)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilation
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Bancs d'essai (DSP + hôte VST3)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp -R build/AuraRack_artefacts/Release/VST3/AuraRack.vst3 dist/
+          if [ -d build/AuraRack_artefacts/Release/AU/AuraRack.component ]; then
+            cp -R build/AuraRack_artefacts/Release/AU/AuraRack.component dist/
+          fi
+          cp README.md dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AuraRack-${{ matrix.name }}
+          path: dist
