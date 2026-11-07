@@ -148,6 +148,6 @@ dans l'état (`order="0,1,…"`).
   (0,18 rad à 20 kHz).
 - **Réordonnancement** : creux de 5 ms (descente + remontée) pendant la permutation.
 - **Plateformes** : développé et testé sous Linux (VST3). macOS (AU, VST3 universel) et Windows sont couverts par la
-  CI ; une séance dans un vrai DAW (Pro Tools via AuraDAW, Logic, Cubase, Ableton) reste à faire, surtout le routage
+  CI ; une séance dans un vrai DAW (AuraDAW, Logic, Cubase, Ableton, Reaper) reste à faire, surtout le routage
   Sidechain propre à chaque hôte.
 - **Interface** : provisoire jusqu'à l'Étape 3.
