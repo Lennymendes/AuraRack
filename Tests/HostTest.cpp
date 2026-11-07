@@ -128,7 +128,12 @@ int main (int argc, char** argv)
     std::vector<double> L (8192, 0.0), R (8192, 0.0);
     L[1000] = R[1000] = 0.25;
     render (*plugin, L, R, nullptr, channels);
-    check (std::abs (L[(std::size_t) (1000 + latency)] - 0.25) < 1e-12, "Impulsion 64 bits intacte, à la latence annoncée", L[(std::size_t) (1000 + latency)]);
+    std::size_t peakAt = 0;
+    for (std::size_t i = 0; i < L.size(); ++i) if (std::abs (L[i]) > std::abs (L[peakAt])) peakAt = i;
+    const double atLatency = L[(std::size_t) (1000 + latency)];
+    if (std::abs (atLatency - 0.25) >= 1e-12)
+        std::printf ("    valeur = %.17g, pic à l'échantillon %zu (%.17g), attendu %d\n", atLatency, peakAt, L[peakAt], 1000 + latency);
+    check (std::abs (atLatency - 0.25) < 1e-12, "Impulsion 64 bits intacte, à la latence annoncée", atLatency);
 
     // Slot 3 = AuraDuck (Dynamic EQ, clé = bus Sidechain) : un kick sur le Sidechain baisse le sub.
     setParam (*plugin, "Slot 1 Type", 0.0f);
