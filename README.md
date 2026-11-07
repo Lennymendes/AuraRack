@@ -50,7 +50,7 @@ réordonnancements : **0**. Le traitement se fait par tranches de 256 échantill
 ne réalloue rien).
 
 **Adaptation DXD.** Les étages non linéaires utilisent l'ADAA du 1er ordre ; le sur-échantillonnage n'est ajouté que
-sous 176,4 kHz (×4 sous 88,2 kHz, ×2 jusqu'à 176,4 kHz, ×1 au-delà). Le détecteur True Peak passe de 4× à 2×.
+sous 176,4 kHz (×4 sous 88,2 kHz, ×2 jusqu'à 176,4 kHz, ×1 au-delà). Le détecteur True Peak passe de 8× à 2×.
 
 ### Threads et échanges lock-free
 
@@ -95,7 +95,7 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraComp** | Détection Peak ou RMS (10 ms) liée en stéréo, courbe à genou doux (Giannoulis / Massberg / Reiss), lissage en dB. Mode Opto : relâchement dépendant de la réduction. Clé interne ou Sidechain. | Threshold, Ratio, Attack, Release, Knee, Makeup, Detector, Style, Key |
 | **AuraDuck** | Clé Sidechain (ou interne) filtrée HP + LP 24 dB/oct ; maintien de crête ≥ 1,5 période redressée de la plus basse fréquence de la clé (le gain ne suit plus les alternances du kick : pas d'intermodulation sur la 808) ; lissage dB + 2 pôles d'arrondi. **Dyn EQ Sub** : low shelf TPT dont le gain suit l'enveloppe, seules les sub-basses baissent. | Threshold, Depth, Attack, Release, Key HP, Key LP, Mode, Sub Freq, Key |
 | **AuraClip** | Genou réglable de hard (0 %) à 6 dB (100 %), C1. ADAA 1er ordre avec antidérivée exacte, repli au point milieu si mal conditionné. Sur-échantillonnage polyphase (127 + 65 coefficients, Kaiser) sous 176,4 kHz seulement. | Drive, Ceiling, Knee, Output, Auto Gain |
-| **AuraLimit** | Lookahead 1,5 ms, détection True Peak (32 coefficients par phase), minimum glissant, relâchement adaptatif (court sur transitoire isolé, long sur réduction soutenue), moyenne glissante de la longueur de l'anticipation : la rampe d'attaque atteint le gain requis à l'arrivée de la crête (démonstration ci-dessous). | Gain, Ceiling (dBTP), Release, Adaptive |
+| **AuraLimit** | Lookahead 1,5 ms, détection True Peak 8× (2× en DXD, 32 coefficients par phase ; le 4× de BS.1770 sous-estime de ~0,5 dB les crêtes proches de 20 kHz), minimum glissant, relâchement adaptatif (court sur transitoire isolé, long sur réduction soutenue), moyenne glissante de la longueur de l'anticipation : la rampe d'attaque atteint le gain requis à l'arrivée de la crête (démonstration ci-dessous). | Gain, Ceiling (dBTP), Release, Adaptive |
 | **AuraDelay** | Ping-pong stéréo continu (0 % = deux delays, 100 % = alternance L / R), Lagrange 3e ordre, temps lissé (glissement type bande), Low Cut / High Cut TPT dans la boucle, retard de groupe du High Cut compensé. | Time, Feedback, Ping-Pong, Low Cut, High Cut, R / L |
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
 
@@ -109,7 +109,7 @@ la propriété est conservée.
 ## Bancs d'essai
 
 `aurarack_dsp_test` (sans JUCE, 55 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
-(Linux, GCC 13, JUCE 8.0.15). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
+(Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
 
@@ -121,15 +121,15 @@ modules, ordre, paramètres et bypass en rafale pendant que le thread audio tour
 | Comp, DC −6 dB, seuil −18, 4:1 | 8,9846 dB (théorie 8,9846) |
 | Duck Dyn EQ, kick → 808 à 352,8 kHz | sub 45 Hz −11,7 dB, charleston 6 kHz −0,008 dB, ondulation 0,02 dB |
 | Clip, 7 kHz, drive 18 dB : repliement / clip naïf | 44,1 k : −70 / −12 dB · 96 k : −53 / −16 dB · 352,8 k (ADAA seul) : −45 / −36 dB |
-| Limit, +12 dB sur bruit + transitoires, plafond −1 dBTP | −0,973 dBTP (44,1 k) · −0,990 dBTP (384 k), true peak mesuré par sinc ×16 |
+| Limit, +12 dB sur bruit + transitoires, plafond −1 dBTP | −0,987 dBTP (44,1 k) · −0,988 dBTP (384 k) ; pire cas sur 30 bruits : −0,972 (44,1 k), −0,995 (96 k), −0,979 (384 k) ; true peak mesuré par sinc ×16 |
 | Delay ping-pong 10 ms, feedback 50 % | échos à 10 / 20 / 30 ms ±1 éch., amplitudes 1 / 0,5 / 0,25 |
 | Verb, Decay 2 s (T20, octave 1 kHz) | 2,09 s à 48 kHz et à 384 kHz |
 | Latence annoncée à l'hôte, Limit à 352,8 kHz | 546 éch., impulsion 64 bits intacte à cet endroit |
 | Duck par le bus Sidechain du VST3 | sub −11,7 dB pendant le kick, 0,0 dB sans |
 | État sauvegardé → nouvelle instance | rendu bit-identique |
 
-**Charge CPU** (rack complet, 7 modules, stéréo, un cœur Xeon 2,3 GHz) : 4,5 % à 44,1 kHz · 8,8 % à 96 kHz ·
-16,4 % à 352,8 kHz · 17,1 % à 384 kHz.
+**Charge CPU** (rack complet, 7 modules, stéréo, un cœur Xeon 2,3 GHz) : 5,2 % à 44,1 kHz · 9,1 % à 96 kHz ·
+15,2 % à 352,8 kHz · 16,6 % à 384 kHz.
 
 ## Paramètres et compatibilité des sessions
 

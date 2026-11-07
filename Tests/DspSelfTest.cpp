@@ -152,6 +152,21 @@ static void runModule (AuraModuleDSP& m, Buf& L, Buf& R, int block = 256, const 
 
 static void setParam (AuraModuleDSP& m, int idx, double plain) { m.setParameter (idx, plain); }
 
+/** Bruit gaussien portable (Box-Muller sur mt19937, normalisé par le C++) : mêmes valeurs avec GCC, Clang et MSVC,
+    contrairement à std::normal_distribution dont l'algorithme dépend de la bibliothèque standard. */
+struct PortableGauss
+{
+    explicit PortableGauss (unsigned seed, double sigmaIn) : rng (seed), sigma (sigmaIn) {}
+    double operator()()
+    {
+        const double u1 = ((double) rng() + 1.0) / 4294967297.0;
+        const double u2 = (double) rng() / 4294967296.0;
+        return sigma * std::sqrt (-2.0 * std::log (u1)) * std::cos (dsp::kTwoPi * u2);
+    }
+    std::mt19937 rng;
+    double sigma;
+};
+
 static Buf sine (std::size_t n, double f, double fs, double amp, double phase = 0.0)
 {
     Buf x (n);
@@ -328,9 +343,8 @@ static void testClip()
         setParam (lin, AuraClip::knee, 0.0);
         lin.reset();
         Buf imp (4096, 0.0), ir;
-        std::mt19937 rng (7);
-        std::normal_distribution<double> nd (0.0, 0.05);
-        for (auto& v : imp) v = nd (rng);
+        PortableGauss nd (7, 0.05);
+        for (auto& v : imp) v = nd();
         auto a = imp, b = imp;
         runModule (lin, a, b);
         const int lat = lin.getLatencySamples();
@@ -358,15 +372,14 @@ static void testLimit()
         setParam (lim, AuraLimit::ceiling, -1.0);
         setParam (lim, AuraLimit::release, 50.0);
         lim.reset();
-        std::mt19937 rng (3);
-        std::normal_distribution<double> nd (0.0, 0.25);
+        PortableGauss nd (3, 0.25);
         const auto n = (std::size_t) (fs * 0.5);
         Buf L (n), R (n);
         // Bruit rose approximatif + transitoires : le cas difficile pour les crêtes inter-échantillons.
         double b0 = 0.0, b1 = 0.0;
         for (std::size_t i = 0; i < n; ++i)
         {
-            const double w = nd (rng);
+            const double w = nd();
             b0 = 0.99765 * b0 + w * 0.0990460;
             b1 = 0.96300 * b1 + w * 0.2965164;
             L[i] = b0 + b1 + 0.1 * w;

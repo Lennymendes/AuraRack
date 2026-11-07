@@ -1,8 +1,10 @@
 // AuraRack — NextDSP · AuraLimit
 // Limiteur brickwall True Peak, lookahead 1,5 ms, relâchement adaptatif.
 //
-// 1. Détection True Peak : interpolation polyphase 4× à 32 coefficients par phase (2× à partir de 176,4 kHz,
-//    où l'écart inter-échantillon d'un contenu audio est déjà < 0,04 dB) + crête échantillon.
+// 1. Détection True Peak : interpolation polyphase 8× à 32 coefficients par phase + crête échantillon.
+//    En 4× (méthode BS.1770), une crête proche de 20 kHz tombe entre deux points et peut être sous-estimée
+//    de ~0,5 dB : mesuré sur 30 bruits, 4× dépasse le plafond de 0,16 dB, 8× reste dessous (-0,972 dBTP).
+//    À partir de 176,4 kHz, 2× suffit (contenu audio et ultrasonore jusqu'à 40 kHz : -0,979 dBTP).
 // 2. Gain requis g = min(1, plafond / crête), minimum glissant sur la fenêtre d'anticipation.
 // 3. Relâchement : instantané vers le bas, exponentiel vers le haut. Constante adaptative : courte
 //    après un transitoire isolé (les transitoires ne pompent pas), longue quand la réduction dure
@@ -126,7 +128,7 @@ public:
     double getGainReductionDb() const noexcept override { return -dsp::gainToDb (outGain); }
 
 private:
-    static constexpr int kTpTaps = 32;   // coefficients par phase (128 au total en 4×)
+    static constexpr int kTpTaps = 32;   // coefficients par phase (256 au total en 8×)
 
     double interpolatedPeak (double x, int c) noexcept
     {
@@ -148,9 +150,9 @@ private:
 
     void prepareInternal() override
     {
-        tpFactor = sampleRate >= dsp::kOversamplingOffRate ? 2 : 4;
+        tpFactor = sampleRate >= dsp::kOversamplingOffRate ? 2 : 8;
         // Coupure à la fréquence de Nyquist d'origine : le signal y est déjà limité, l'interpolation reste plate
-        // jusqu'à ~0,42·fs (18,5 kHz à 44,1 kHz ; tout le spectre audio en DXD).
+        // jusqu'à ~0,45·fs (tout le spectre audio, à 44,1 kHz comme en DXD).
         tpCoefs = dsp::designKaiserLowpass (tpFactor * kTpTaps, 0.5 / tpFactor, 9.0);
         for (auto& c : tpCoefs) c *= tpFactor;
         for (auto& h : tpHistory) h.assign (kTpTaps, 0.0);
