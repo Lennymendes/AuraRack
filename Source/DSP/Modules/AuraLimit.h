@@ -59,8 +59,8 @@ public:
         for (auto& h : tpHistory) std::fill (h.begin(), h.end(), 0.0);
         tpPos = 0;
         holdMin.reset();
-        std::fill (boxRing.begin(), boxRing.end(), 1.0);
-        boxSum = (double) boxRing.size();
+        std::fill (boxRing.begin(), boxRing.end(), 0.0);
+        boxSum = 0.0;
         boxPos = 0;
         boxRefresh = 0;
         envelope = 1.0;
@@ -105,9 +105,11 @@ public:
             else
                 envelope = m + dsp::timeCoef (relMs, sampleRate) * (envelope - m);
 
-            // Moyenne glissante exacte sur boxRing.size() échantillons.
-            boxSum += envelope - boxRing[boxPos];
-            boxRing[boxPos] = envelope;
+            // Moyenne glissante sur boxRing.size() échantillons, tenue sur le déficit (1 - gain) : sans limitation
+            // la somme vaut exactement 0 et le gain exactement 1 (limiteur bit-transparent sous le plafond).
+            const double deficit = 1.0 - envelope;
+            boxSum += deficit - boxRing[boxPos];
+            boxRing[boxPos] = deficit;
             boxPos = (boxPos + 1) % boxRing.size();
             if (++boxRefresh >= 65536)
             {
@@ -115,7 +117,7 @@ public:
                 boxSum = 0.0;
                 for (double v : boxRing) boxSum += v;
             }
-            outGain = std::min (1.0, boxSum * boxNorm);
+            outGain = 1.0 - std::max (0.0, boxSum) * boxNorm;
 
             for (int c = 0; c < 2; ++c)
             {
@@ -165,7 +167,7 @@ private:
 
         for (auto& d : audioDelay) d.prepare ((std::size_t) latency + 2);
         holdMin.prepare (latency + 1);
-        boxRing.assign ((std::size_t) lookahead + 1, 1.0);
+        boxRing.assign ((std::size_t) lookahead + 1, 0.0);
         sustainCoef = dsp::timeCoef (300.0, sampleRate);
         inSmooth.prepare (sampleRate, 20.0);
     }

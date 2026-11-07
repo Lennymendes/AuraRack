@@ -35,7 +35,7 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (145 paramètres), textes qui suivent le module du slot |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (55 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (56 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
 
 ## Architecture audio
@@ -108,7 +108,7 @@ la propriété est conservée.
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 55 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
+`aurarack_dsp_test` (sans JUCE, 56 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -117,7 +117,7 @@ modules, ordre, paramètres et bypass en rafale pendant que le thread audio tour
 |---|---|
 | Peak 1 kHz +12 dB à 44,1 / 352,8 / 384 kHz | 12,0000 dB |
 | Low shelf 20 Hz +6 dB à 384 kHz (mesuré à 2 Hz) | 5,9994 dB |
-| EQ à 0 dB, rack vide | sortie bit-identique |
+| EQ à 0 dB, rack vide ; EQ 0 dB + Limit sous le plafond | sortie bit-identique (retardée de la latence pour le Limit) |
 | Comp, DC −6 dB, seuil −18, 4:1 | 8,9846 dB (théorie 8,9846) |
 | Duck Dyn EQ, kick → 808 à 352,8 kHz | sub 45 Hz −11,7 dB, charleston 6 kHz −0,008 dB, ondulation 0,02 dB |
 | Clip, 7 kHz, drive 18 dB : repliement / clip naïf | 44,1 k : −70 / −12 dB · 96 k : −53 / −16 dB · 352,8 k (ADAA seul) : −45 / −36 dB |

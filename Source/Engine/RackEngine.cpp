@@ -369,8 +369,8 @@ void RackEngine::processChunk (double* L, double* R, int n, const double* scL, c
         const double mm = masterMix.next();
         const double go = outputGain.next();
         const double dl = dryL[(std::size_t) i], dr = dryR[(std::size_t) i];
-        L[i] = (dl + mm * (L[i] * rg[i] - dl)) * go;
-        R[i] = (dr + mm * (R[i] * rg[i] - dr)) * go;
+        L[i] = (dl * (1.0 - mm) + L[i] * rg[i] * mm) * go;
+        R[i] = (dr * (1.0 - mm) + R[i] * rg[i] * mm) * go;
         peakOutL = std::max (peakOutL, std::abs (L[i]));
         peakOutR = std::max (peakOutR, std::abs (R[i]));
     }
@@ -499,9 +499,10 @@ void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int 
             wetSampleR = (1.0 - w) * pr[i] + w * wetSampleR;
         }
 
+        // Forme dry·(1-m) + wet·m : exacte à 0 % et à 100 % (dry + m·(wet - dry) ne l'est pas en flottant).
         const double dL = rl[i] * gIn, dR = rr[i] * gIn;
-        const double procL = (dL + m * (wetSampleL - dL)) * gOut;
-        const double procR = (dR + m * (wetSampleR - dR)) * gOut;
+        const double procL = (dL * (1.0 - m) + wetSampleL * m) * gOut;
+        const double procR = (dR * (1.0 - m) + wetSampleR * m) * gOut;
         L[i] = b * procL + (1.0 - b) * rl[i];
         R[i] = b * procR + (1.0 - b) * rr[i];
     }

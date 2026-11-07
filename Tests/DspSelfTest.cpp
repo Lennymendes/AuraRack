@@ -620,6 +620,26 @@ static void testEngine()
     }
 
     {
+        // Transparence : EQ à 0 dB + Limit sous le plafond, Mix 100 % -> l'entrée retardée, au bit près.
+        RackEngine e;
+        TestParams p;
+        p.bind (e);
+        p.setType (e, 2, ModuleType::eq);
+        p.setType (e, 5, ModuleType::limit);
+        e.prepare (fs, 512);
+        const int lat = e.getRequestedLatency();
+        PortableGauss g (5, 0.1);
+        Buf L (40000), R (40000);
+        for (std::size_t i = 0; i < L.size(); ++i) { L[i] = g(); R[i] = g(); }
+        const auto inL = L, inR = R;
+        runEngine (e, L, R, 0, L.size(), 300);
+        bool exact = true;
+        for (std::size_t i = (std::size_t) lat; i < L.size(); ++i)
+            exact = exact && L[i] == inL[i - (std::size_t) lat] && R[i] == inR[i - (std::size_t) lat];
+        check (exact, "EQ 0 dB + Limit sous le plafond : sortie = entrée retardée, bit pour bit", lat, "éch.");
+    }
+
+    {
         // Bypass, réordonnancement et échange de module à chaud : aucun saut d'échantillon anormal, 0 allocation.
         RackEngine e;
         TestParams p;
