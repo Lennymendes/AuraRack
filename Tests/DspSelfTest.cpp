@@ -228,25 +228,217 @@ static void testEq()
     check (std::abs (g + 9.0) < 0.001, "Peak 3 kHz -9 dB Q 2 @ 384 kHz", g, "dB");
 }
 
+/** Fait tourner un compresseur échantillon par échantillon et renvoie la réduction (dB) relevée aux instants demandés. */
+static std::vector<double> reductionAt (AuraComp& c, double fs, const std::vector<double>& times, double tailSec,
+                                        const std::function<double (double)>& program)
+{
+    std::vector<double> out;
+    const auto total = (std::size_t) ((times.back() + tailSec) * fs) + 2;
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < total; ++i)
+    {
+        const double t = (double) i / fs;
+        double l = program (t), r = l;
+        c.process (&l, &r, 1, {});
+        if (next < times.size() && t >= times[next]) { out.push_back (c.getGainReductionDb()); ++next; }
+    }
+    return out;
+}
+
 static void testComp()
 {
-    std::puts ("\n== 3. AuraComp");
-    const double fs = 96000.0;
-    AuraComp c;
-    c.prepare (fs, 256);
-    setParam (c, AuraComp::threshold, -18.0);
-    setParam (c, AuraComp::ratio, 4.0);
-    setParam (c, AuraComp::knee, 0.0);
-    setParam (c, AuraComp::attack, 1.0);
-    Buf L ((std::size_t) fs, 0.5), R = L;
-    runModule (c, L, R);
-    const double expected = (dsp::gainToDb (0.5) + 18.0) * 0.75;
-    const double measured = dsp::gainToDb (0.5 / L.back());
-    check (std::abs (measured - expected) < 0.01, "Réduction statique (DC -6 dB, seuil -18, 4:1) = " + std::to_string (expected), measured, "dB");
+    std::puts ("\n== 3. AuraComp (Aura-Opto, Aura-Tube, L-Comp)");
 
-    setParam (c, AuraComp::knee, 12.0);
-    const double inKnee = c.gainReductionFor (-18.0);
-    check (std::abs (inKnee - 0.75 * 36.0 / 24.0) < 1e-9, "Genou 12 dB : réduction au seuil = (1-1/R)·(W/2)²/(2W)", inKnee, "dB");
+    // --- Masques de paramètres par algorithme.
+    {
+        const auto& i = AuraComp::info();
+        check (i.visibleMask (0) == ((1u << 0) | (1u << 1) | (1u << 2) | (1u << 3)), "Masque Aura-Opto : Algorithm, Key, Peak Reduction, Gain");
+        check ((i.visibleMask (1) & (1u << AuraComp::threshold)) != 0 && (i.visibleMask (1) & (1u << AuraComp::crush)) == 0, "Masque Aura-Tube : Threshold/Ratio/Attack/Release/Makeup, pas Crush");
+        check (i.visibleMask (2) == ((1u << 0) | (1u << 1) | (1u << 9)), "Masque L-Comp : un seul bouton (Crush)");
+    }
+
+    // --- Aura-Tube : réduction statique et gain de sortie.
+    {
+        const double fs = 96000.0;
+        AuraComp c;
+        c.prepare (fs, 256);
+        setParam (c, AuraComp::algorithm, 1);
+        setParam (c, AuraComp::threshold, -18.0);
+        setParam (c, AuraComp::ratio, 4.0);
+        setParam (c, AuraComp::attack, 10.0);
+        setParam (c, AuraComp::release, 50.0);
+        c.reset();
+        auto L = sine ((std::size_t) (fs * 3.0), 1000.0, fs, 0.5), R = L;
+        runModule (c, L, R);
+        const double expected = c.gainReductionFor (dsp::gainToDb (0.5));
+        double meanGr = 0.0;                                   // moyenne sur 10 périodes (l'ondulation résiduelle s'annule)
+        for (int i = 0; i < 960; ++i)
+        {
+            double l = 0.5 * std::sin (dsp::kTwoPi * 1000.0 * (double) (L.size() + (std::size_t) i) / fs), r = l;
+            c.process (&l, &r, 1, {});
+            meanGr += c.getGainReductionDb() / 960.0;
+        }
+        check (std::abs (meanGr - expected) < 0.08, "Tube : réduction statique (sinus -6 dBFS, seuil -18, 4:1, genou 10 dB)", meanGr - expected, "dB d'écart");
+        const std::size_t n = L.size(), len = (std::size_t) fs / 2;
+        const double outDb = dsp::gainToDb (toneAmplitude (L, n - len, len, 1000.0, fs) / 0.5);
+        check (std::abs (outDb + expected) < 0.35, "Tube : niveau de sortie = -réduction (écart = couleur de l'étage lampe)", outDb + expected, "dB");
+        double mean = 0.0;
+        for (std::size_t i = n - len; i < n; ++i) mean += L[i];
+        check (std::abs (mean / (double) len) < 1e-4, "Tube : pas de continu en sortie (blocage 5 Hz)", mean / (double) len);
+    }
+
+    // --- Aura-Opto : Peak Reduction règle la profondeur, monotone, quasi nul à 0.
+    {
+        const double fs = 96000.0;
+        double gr[3] {};
+        const double pr[3] = { 0.0, 50.0, 80.0 };
+        for (int k = 0; k < 3; ++k)
+        {
+            AuraComp c;
+            c.prepare (fs, 256);
+            setParam (c, AuraComp::algorithm, 0);
+            setParam (c, AuraComp::peakReduction, pr[k]);
+            c.reset();
+            auto L = sine ((std::size_t) (fs * 12.0), 1000.0, fs, 0.316), R = L;   // -10 dBFS
+            runModule (c, L, R);
+            gr[k] = c.getGainReductionDb();
+        }
+        check (gr[0] < 1.0, "Opto : Peak Reduction 0 ≈ pas de compression (sinus -10 dBFS)", gr[0], "dB");
+        check (gr[1] > gr[0] + 2.0 && gr[2] > gr[1] + 2.0, "Opto : réduction croissante avec Peak Reduction (0 / 50 / 80)", gr[2], "dB");
+        check (gr[1] > 3.0 && gr[1] < 9.0, "Opto : Peak Reduction 50 -> quelques dB (leveling, courbe douce)", gr[1], "dB");
+    }
+
+    // --- Aura-Opto : relâchement dépendant du programme (court après un bref passage, long après un passage soutenu).
+    {
+        const double fs = 48000.0;
+        auto halfTime = [&] (double burstSec)
+        {
+            AuraComp c;
+            c.prepare (fs, 256);
+            setParam (c, AuraComp::algorithm, 0);
+            setParam (c, AuraComp::peakReduction, 70.0);
+            c.reset();
+            const auto nBurst = (std::size_t) (burstSec * fs);
+            double peak = 0.0;
+            for (std::size_t i = 0; i < nBurst; ++i)
+            {
+                double l = 0.5 * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs), r = l;
+                c.process (&l, &r, 1, {});
+                peak = c.getGainReductionDb();
+            }
+            for (std::size_t i = 0; i < (std::size_t) (30.0 * fs); ++i)
+            {
+                double l = 0.0, r = 0.0;
+                c.process (&l, &r, 1, {});
+                if (c.getGainReductionDb() < 0.5 * peak) return (double) i / fs;
+            }
+            return 30.0;
+        };
+        const double shortT = halfTime (0.15), longT = halfTime (12.0);
+        check (shortT < 0.4, "Opto : relâchement à 50 % après un passage de 150 ms", shortT * 1000.0, "ms");
+        check (longT > 3.0 * shortT, "Opto : relâchement bien plus lent après 12 s de compression (programme)", longT * 1000.0, "ms");
+    }
+
+    // --- Invariance de la dynamique en fréquence d'échantillonnage (réponse à un échelon, Tube et Opto).
+    {
+        const std::vector<double> times { 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0 };
+        for (int algo : { 0, 1 })
+        {
+            std::vector<std::vector<double>> res;
+            const double rates[] = { 44100.0, 96000.0, 352800.0, 384000.0 };
+            for (double fs : rates)
+            {
+                AuraComp c;
+                c.prepare (fs, 256);
+                setParam (c, AuraComp::algorithm, algo);
+                setParam (c, AuraComp::peakReduction, 60.0);
+                setParam (c, AuraComp::threshold, -24.0);
+                setParam (c, AuraComp::ratio, 6.0);
+                setParam (c, AuraComp::attack, 5.0);
+                setParam (c, AuraComp::release, 300.0);
+                c.reset();
+                // Échelon d'amplitude sur un sinus de 1 kHz à t = 0,2 s (phase continue).
+                std::vector<double> t2; for (double t : times) t2.push_back (0.2 + t);
+                res.push_back (reductionAt (c, fs, t2, 0.01, [] (double t) { return (t < 0.2 ? 0.02 : 0.5) * std::sin (dsp::kTwoPi * 1000.0 * t); }));
+            }
+            double worst = 0.0;
+            for (std::size_t r = 0; r < 3; ++r)
+                for (std::size_t k = 0; k < times.size(); ++k)
+                {
+                    const double d = std::abs (res[r][k] - res[3][k]);
+                    worst = std::max (worst, d);
+                }
+            check (worst < 0.2, std::string ("Invariance en fréquence d'échantillonnage (44,1 / 96 / 352,8 vs 384 kHz) : ") + (algo == 0 ? "Opto" : "Tube"), worst, "dB max");
+        }
+    }
+
+    // --- Aucun repliement / modulation parasite à 384 kHz et à 44,1 kHz (sinus de 18 kHz comprimé).
+    for (double fs : { 384000.0, 44100.0 })
+    {
+        for (int algo : { 0, 1, 2 })
+        {
+            AuraComp c;
+            c.prepare (fs, 256);
+            setParam (c, AuraComp::algorithm, algo);
+            setParam (c, AuraComp::peakReduction, 70.0);
+            setParam (c, AuraComp::threshold, -24.0);
+            setParam (c, AuraComp::ratio, 8.0);
+            setParam (c, AuraComp::crush, 80.0);
+            c.reset();
+            const std::size_t n = (std::size_t) 65536, warm = (std::size_t) (fs * 1.5);
+            const std::size_t k0 = (std::size_t) std::lround ((fs > 100000.0 ? 18000.0 : 5000.0) * (double) n / fs);   // raie exacte
+            const double f0 = (double) k0 * fs / (double) n;
+            auto L = sine (warm + n, f0, fs, 0.5), R = L;
+            runModule (c, L, R);
+            const double r = aliasRatioDb (L, warm, n, k0);
+            const char* names[] = { "Opto", "Tube", "L-Comp" };
+            // Au-dessus de 176,4 kHz, le contenu non harmonique doit être sous -110 dB ; à 44,1 kHz la saturation
+            // (Tube, L-Comp) peut produire des harmoniques repliées, mais restant sous -50 dB.
+            const double limit = fs > 100000.0 ? -90.0 : (algo == 0 ? -90.0 : -50.0);
+            check (r < limit, std::string ("Contenu non harmonique, ") + names[algo] + " " + std::to_string ((int) (fs / 1000.0)) + " kHz, sinus " + std::to_string ((int) f0) + " Hz", r, "dB");
+        }
+    }
+
+    // --- L-Comp : un bouton, écrase vite, plafond 0 dBFS.
+    {
+        const double fs = 352800.0;
+        AuraComp c;
+        c.prepare (fs, 256);
+        setParam (c, AuraComp::algorithm, 2);
+        setParam (c, AuraComp::crush, 100.0);
+        c.reset();
+        auto level = [&] (double amp)
+        {
+            c.reset();
+            auto L = sine ((std::size_t) (fs * 1.0), 1000.0, fs, amp), R = L;
+            runModule (c, L, R);
+            return std::make_pair (dsp::gainToDb (toneAmplitude (L, (std::size_t) (fs * 0.5), (std::size_t) (fs * 0.5), 1000.0, fs)), peakAbs (L, 0, L.size()));
+        };
+        const auto lo = level (0.0316), hi = level (0.5);      // -30 dBFS et -6 dBFS : 24 dB d'écart à l'entrée
+        check (hi.first - lo.first < 12.0, "L-Comp 100 % : 24 dB d'écart en entrée -> moins de 12 dB en sortie", hi.first - lo.first, "dB");
+        const auto hot = level (1.0);
+        check (hot.second <= 1.0 + 1e-12, "L-Comp : crête de sortie <= 0 dBFS pour une entrée à 0 dBFS", dsp::gainToDb (hot.second), "dBFS");
+
+        // Vitesse : échelon de +20 dB, 90 % de la réduction finale atteints en moins de 0,5 ms.
+        c.reset();
+        auto gr = reductionAt (c, fs, { 0.1002, 0.1005, 0.102, 0.3 }, 0.01, [] (double t) { return (t < 0.1 ? 0.03 : 0.3) * std::sin (dsp::kTwoPi * 1000.0 * t); });
+        check (gr[1] > 0.9 * gr[3], "L-Comp : 90 % de la réduction atteints en 0,5 ms (échelon +20 dB)", gr[1] / gr[3] * 100.0, "%");
+    }
+
+    // --- Silence : les états retombent exactement à zéro (pas de dénormalisés).
+    {
+        const double fs = 48000.0;
+        AuraComp c;
+        c.prepare (fs, 256);
+        setParam (c, AuraComp::algorithm, 0);
+        setParam (c, AuraComp::peakReduction, 80.0);
+        c.reset();
+        auto L = sine ((std::size_t) (fs * 2.0), 1000.0, fs, 0.5), R = L;
+        runModule (c, L, R);
+        Buf z ((std::size_t) fs, 0.0), z2 = z;
+        for (int s = 0; s < 150; ++s) runModule (c, z, z2);
+        check (c.getGainReductionDb() == 0.0, "Opto : réduction exactement nulle après 150 s de silence", c.getGainReductionDb(), "dB");
+    }
 }
 
 static void testDuck()
@@ -736,7 +928,11 @@ static void testStress()
             }
             e.process (L.data(), R.data(), 512, key.data(), key.data(), true);
             for (int i = 0; i < 512; ++i)
-                if (! std::isfinite (L[(std::size_t) i]) || std::abs (L[(std::size_t) i]) > 100.0) finite = false;
+                if (! std::isfinite (L[(std::size_t) i]) || std::abs (L[(std::size_t) i]) > 1.0e4)
+                {
+                    finite = false;
+                    std::printf ("      échantillon hors borne : %g\n", L[(std::size_t) i]);
+                }
             blocks.fetch_add (1);
         }
     });

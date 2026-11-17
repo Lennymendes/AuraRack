@@ -1,4 +1,4 @@
-# AuraRack 0.2 — NextDSP · rack multi-effets DXD (VST3 / AU)
+# AuraRack 0.3 — NextDSP · rack multi-effets DXD (VST3 / AU)
 
 Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **7 modules** DSP natifs,
 traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marque **NextDSP**, suite **AuraSuite**
@@ -6,9 +6,9 @@ traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marq
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : Étapes 1 et 2 du cahier des charges (processeur, bus Sidechain, moteur de rack lock-free, 7 modules).
-L'interface est provisoire (`GenericAudioProcessorEditor` : tous les paramètres en liste) ; l'Étape 3 apporte
-le `PluginEditor` NextDSP (anthracite `#0B0C10`, rack, glisser-déposer).
+**État** : Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 7 modules,
+**AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp) et **éditeur NextDSP** (anthracite `#0B0C10`, rack en grille
+de 10 cartes, glisser-déposer, réduction de gain et niveaux en direct).
 
 ## Compiler
 
@@ -33,10 +33,13 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb` |
 | `Source/DSP/ModuleRegistry.h` | Métadonnées par type, fabrique |
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
-| `Source/Parameters.*` | Disposition APVTS (145 paramètres), textes qui suivent le module du slot |
+| `Source/Parameters.*` | Disposition APVTS (154 paramètres), textes qui suivent le module du slot |
+| `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
+| `Source/UI/` | `NextLookAndFeel` (vectoriel), `RackView` (grille + glisser-déposer), `SlotComponent`, `TopBar`, `Widgets.h` |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (57 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (78 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, `moveSlot` concurrent, rendu PNG (7 vérifications) |
 
 ## Architecture audio
 
@@ -94,7 +97,7 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | Module | Algorithme | Paramètres |
 |---|---|---|
 | **AuraEQ** | 3 SVF TPT (Zavalishin / Simper) en série : Low Shelf, Peak, High Shelf. g = tan(π·f/fs) : réponse exacte et stable de 20 Hz à 384 kHz. Lissage en log de la fréquence, coefficients recalculés toutes les 16 éch. Une bande à 0 dB est sautée (sortie bit-identique). | Low Freq/Gain, Mid Freq/Gain/Q, High Freq/Gain, Shelf Q, Output |
-| **AuraComp** | Détection Peak ou RMS (10 ms) liée en stéréo, courbe à genou doux (Giannoulis / Massberg / Reiss), lissage en dB. Mode Opto : relâchement dépendant de la réduction. Clé interne ou Sidechain. | Threshold, Ratio, Attack, Release, Knee, Makeup, Detector, Style, Key |
+| **AuraComp** | **3 algorithmes** (paramètre Algorithm), voir la section suivante. Clé interne ou Sidechain. | Algorithm, Key + ceux de l'algorithme |
 | **AuraDuck** | Clé Sidechain (ou interne) filtrée HP + LP 24 dB/oct ; maintien de crête ≥ 1,5 période redressée de la plus basse fréquence de la clé (le gain ne suit plus les alternances du kick : pas d'intermodulation sur la 808) ; lissage dB + 2 pôles d'arrondi. **Dyn EQ Sub** : low shelf TPT dont le gain suit l'enveloppe, seules les sub-basses baissent. | Threshold, Depth, Attack, Release, Key HP, Key LP, Mode, Sub Freq, Key |
 | **AuraClip** | Genou réglable de hard (0 %) à 6 dB (100 %), C1. ADAA 1er ordre avec antidérivée exacte, repli au point milieu si mal conditionné. Sur-échantillonnage polyphase (127 + 65 coefficients, Kaiser) sous 176,4 kHz seulement. | Drive, Ceiling, Knee, Output, Auto Gain |
 | **AuraLimit** | Lookahead 1,5 ms, détection True Peak 8× (2× en DXD, 32 coefficients par phase ; le 4× de BS.1770 sous-estime de ~0,5 dB les crêtes proches de 20 kHz), minimum glissant, relâchement adaptatif (court sur transitoire isolé, long sur réduction soutenue), moyenne glissante de la longueur de l'anticipation : la rampe d'attaque atteint le gain requis à l'arrivée de la crête (démonstration ci-dessous). | Gain, Ceiling (dBTP), Release, Adaptive |
@@ -108,9 +111,46 @@ longueur A + 1 (A = anticipation, D = A + retard du détecteur + 1), chaque vale
 la moyenne est ≤ au gain requis. Le relâchement (instantané vers le bas, exponentiel vers le haut) reste ≤ au minimum,
 la propriété est conservée.
 
+## AuraComp : 3 algorithmes pour le DXD
+
+Tout le calcul de dynamique est en `double`, en dB, avec des constantes de temps **en secondes** : coefficient
+`1 − exp(−1/(τ·fs))` calculé par `expm1` (aucune annulation, même 7,5 s à 384 kHz), temps dépendants du programme
+réévalués à chaque échantillon. Courbes de transfert analytiques et lisses (softplus, genou quadratique), sans table
+ni interpolation. Un étage « panneau électroluminescent » (puissance moyenne, τ 0,5 à 2 ms) précède la conversion en dB :
+le redressement ne module pas le gain à 2f. États ramenés exactement à zéro sous 1e-15 dB (pas de dénormalisés).
+Latence 0.
+
+| Algorithme | Contrôles | Particularités |
+|---|---|---|
+| **Aura-Opto** (esprit LA-2A) | Gain, Peak Reduction | Peak Reduction règle le niveau envoyé au détecteur (pas un seuil) ; courbe softplus, ratio effectif 3:1. Cellule optique à 2 voies + mémoire : relâchement ≈ 55 ms après un passage de 150 ms, ≈ 670 ms après 12 s de compression ; l'attaque accélère avec la profondeur. |
+| **Aura-Tube** (esprit CL 1B) | Threshold, Ratio, Attack, Release, Makeup | Même cellule, temps de base réglés par l'utilisateur (Attack 0,5 à 300 ms, Release 5 ms à 7,5 s), genou 10 dB. Étage de sortie « lampe » : tanh asymétrique à gain petit signal unitaire, ADAA 1er ordre, blocage du continu à 5 Hz. |
+| **L-Comp** (« Looser Compressor ») | Crush (un seul bouton) | Crush règle ensemble le seuil (−6 → −46 dB), le ratio (2 → 20:1) et un makeup automatique (85 % de la compensation du plafond). Attaque ≈ 50 µs, relâchement à deux temps (15 / 200 ms), clé filtrée à 60 Hz, détecteur à maintien de crête, plafond doux (C¹, ADAA) : la sortie ne dépasse jamais 0 dBFS. |
+
+Les constantes (temps de cellule, courbes) sont des points de départ établis à partir du comportement publié de ces
+appareils, **calibrés par mesure et non par comparaison avec le matériel** : à affiner à l'écoute. Les 10 paramètres
+de l'AuraComp existent toujours ; chaque algorithme n'utilise que les siens (l'interface n'affiche que ceux-là), ce qui
+évite qu'un changement d'algorithme réinterprète des valeurs.
+
+## L'éditeur NextDSP
+
+- **Vectoriel, sans image** : `Path` et `Graphics` JUCE, palette anthracite, un accent par type de module. Le contenu a une
+  taille fixe (1280 × 780) mise à l'échelle en bloc : la fenêtre est redimensionnable à ratio constant.
+- **Une seule horloge** : `VBlankAttachment` pour toute l'interface. Elle lit des atomiques, ne repeint que les rectangles
+  dont la valeur affichée change (l'historique de réduction de gain ne repeint pas tant qu'il n'y a pas de réduction),
+  et s'arrête avec la fenêtre.
+- **Niveaux** : le thread audio maintient les crêtes (un seul écrivain) ; l'interface lit avec `exchange(0)`, donc aucune
+  crête n'est perdue entre deux images, même à 384 kHz (blocs de ~1,3 ms pour 16 ms par image). Balistique d'affichage
+  côté interface.
+- **Glisser-déposer sans course** : les cartes sont liées à l'identité du slot (paramètres `sN_*`), pas à sa position.
+  La vue lit l'ordre en **un mot atomique de 64 bits** et le compare à celui qu'elle affiche (resynchronisation animée si
+  l'ordre change ailleurs : restauration d'état, annulation). Pendant le glissement rien n'est écrit ; au relâchement un
+  seul `moveSlot`, par **compare-and-swap** côté moteur. Le thread audio n'est jamais bloqué.
+- Sélecteur de module par slot (`setSlotModule`), Bypass, Mix, trims In / Out, indicateur DXD, latence, voyant Sidechain,
+  CPU.
+
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 57 vérifications) et `aurarack_host_test` (hôte VST3, 14 vérifications) : tout passe
+`aurarack_dsp_test` (sans JUCE, 78 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -120,7 +160,10 @@ modules, ordre, paramètres et bypass en rafale pendant que le thread audio tour
 | Peak 1 kHz +12 dB à 44,1 / 352,8 / 384 kHz | 12,0000 dB |
 | Low shelf 20 Hz +6 dB à 384 kHz (mesuré à 2 Hz) | 5,9994 dB |
 | EQ à 0 dB, rack vide ; EQ 0 dB + Limit sous le plafond | sortie bit-identique (retardée de la latence pour le Limit) |
-| Comp, DC −6 dB, seuil −18, 4:1 | 8,9846 dB (théorie 8,9846) |
+| Aura-Tube, sinus −6 dBFS, seuil −18, 4:1 | réduction = théorie à 0,04 dB près (ondulation résiduelle du détecteur) |
+| Aura-Opto / Aura-Tube, échelon d'amplitude, 44,1 / 96 / 352,8 kHz contre 384 kHz | écart max 0,05 dB (Opto) · 0,13 dB (Tube) : la dynamique ne dépend pas de la fréquence |
+| Contenu non harmonique, sinus 18 kHz comprimé à 384 kHz | Opto −151 dB · Tube −148 dB · L-Comp −95 dB (5 kHz à 44,1 kHz : −122 / −120 / −70 dB) |
+| L-Comp 100 % : 24 dB d'écart en entrée | 1,2 dB en sortie ; crête ≤ 0 dBFS ; 97 % de la réduction en 0,5 ms |
 | Duck Dyn EQ, kick → 808 à 352,8 kHz | sub 45 Hz −11,7 dB, charleston 6 kHz −0,008 dB, ondulation 0,02 dB |
 | Clip, 7 kHz, drive 18 dB : repliement / clip naïf | 44,1 k : −70 / −12 dB · 96 k : −53 / −16 dB · 352,8 k (ADAA seul) : −45 / −36 dB |
 | Limit, +12 dB sur bruit + transitoires, plafond −1 dBTP | −0,987 dBTP (44,1 k) · −0,988 dBTP (384 k) ; pire cas sur 30 bruits : −0,972 (44,1 k), −0,995 (96 k), −0,979 (384 k) ; true peak mesuré par sinc ×16 |
@@ -131,12 +174,12 @@ modules, ordre, paramètres et bypass en rafale pendant que le thread audio tour
 | État sauvegardé → nouvelle instance | rendu bit-identique |
 
 **Charge CPU** (rack complet, 7 modules, stéréo, un cœur Xeon 2,3 GHz) : 5,2 % à 44,1 kHz · 9,1 % à 96 kHz ·
-15,2 % à 352,8 kHz · 16,6 % à 384 kHz.
+15,2 % à 352,8 kHz · 16,6 % à 384 kHz. Un AuraComp seul à 384 kHz : Aura-Opto 3,1 % · Aura-Tube 6,6 % · L-Comp 2,6 %.
 
 ## Paramètres et compatibilité des sessions
 
 Identifiants figés : `in_gain`, `out_gain`, `master_mix`, `sc_source`, puis pour chaque slot `sN_type` (non
-automatisable), `sN_bypass`, `sN_mix`, `sN_in`, `sN_out`, `sN_p1` … `sN_p9`. Les 9 paramètres génériques sont
+automatisable), `sN_bypass`, `sN_mix`, `sN_in`, `sN_out`, `sN_p1` … `sN_p10`. Les 10 paramètres génériques sont
 normalisés ; l'hôte affiche leur valeur dans l'unité du module du slot (« 10.8 dB », « 8.00 kHz »…). Choisir un module
 remet ses paramètres à leurs valeurs par défaut ; restaurer une session les conserve. L'ordre des slots est enregistré
 dans l'état (`order="0,1,…"`).
@@ -152,4 +195,11 @@ dans l'état (`order="0,1,…"`).
 - **Plateformes** : développé et testé sous Linux (VST3). macOS (AU, VST3 universel) et Windows sont couverts par la
   CI ; une séance dans un vrai DAW (AuraDAW, Logic, Cubase, Ableton, Reaper) reste à faire, surtout le routage
   Sidechain propre à chaque hôte.
-- **Interface** : provisoire jusqu'à l'Étape 3.
+- **Interface** : rendue et testée sans fenêtre (rendu PNG, glisser-déposer simulé) ; l'aspect et la fluidité dans de vrais
+  DAW (macOS, Windows, HiDPI) restent à valider. Pas encore d'affichage de courbes (EQ, courbe de transfert du comp).
+- **Aura-Tube / L-Comp** : l'ADAA ajoute un demi-échantillon de retard et −0,12 dB à 20 kHz (384 kHz) sur ces deux chemins.
+  Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
+- **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
+  rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.
+- **L-Comp** : sans anticipation, un pic isolé peut dépasser ~0 dBFS l'espace de ~50 µs avant que le plafond doux ne le
+  rattrape ; le plafond (C¹, ADAA) borne la sortie à 0 dBFS.

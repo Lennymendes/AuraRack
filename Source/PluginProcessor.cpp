@@ -1,12 +1,13 @@
 // AuraRack — NextDSP
 
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 
 #include <optional>
 
 namespace
 {
-    constexpr int kStateVersion = 1;
+    constexpr int kStateVersion = 2;   // 2 : AuraComp à 3 algorithmes, 10 paramètres génériques par slot
     const juce::Identifier kOrderProperty { "order" };
     const juce::Identifier kVersionProperty { "auraRackVersion" };
 
@@ -267,18 +268,8 @@ void AuraRackProcessor::setSlotOrder (const aura::SlotOrder& order)
 
 void AuraRackProcessor::moveSlot (int fromPosition, int toPosition)
 {
-    auto order = engine.getOrder();
-    if (fromPosition < 0 || fromPosition >= aura::kNumSlots || toPosition < 0 || toPosition >= aura::kNumSlots
-        || fromPosition == toPosition)
-        return;
-
-    const int moved = order[(std::size_t) fromPosition];
-    if (fromPosition < toPosition)
-        std::copy (order.begin() + fromPosition + 1, order.begin() + toPosition + 1, order.begin() + fromPosition);
-    else
-        std::copy_backward (order.begin() + toPosition, order.begin() + fromPosition, order.begin() + fromPosition + 1);
-    order[(std::size_t) toPosition] = moved;
-    setSlotOrder (order);
+    if (engine.moveSlot (fromPosition, toPosition))
+        apvts.state.setProperty (kOrderProperty, orderToString (engine.getOrder()), nullptr);
 }
 
 //==============================================================================
@@ -314,8 +305,7 @@ void AuraRackProcessor::setStateInformation (const void* data, int sizeInBytes)
 //==============================================================================
 juce::AudioProcessorEditor* AuraRackProcessor::createEditor()
 {
-    // Interface provisoire (Étape 3 : PluginEditor NextDSP avec glisser-déposer des slots).
-    return new juce::GenericAudioProcessorEditor (*this);
+    return new AuraRackEditor (*this);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

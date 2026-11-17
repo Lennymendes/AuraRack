@@ -1,6 +1,6 @@
 # AuraRack — NextDSP · rack multi-effets DXD (VST3 / AU)
 cmake_minimum_required(VERSION 3.22)
-project(AuraRack VERSION 0.2.0 LANGUAGES C CXX)
+project(AuraRack VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,7 +73,12 @@ if(AURA_BUILD_PLUGIN)
 
     target_sources(AuraRack PRIVATE
         Source/PluginProcessor.cpp
-        Source/Parameters.cpp)
+        Source/PluginEditor.cpp
+        Source/Parameters.cpp
+        Source/UI/NextLookAndFeel.cpp
+        Source/UI/SlotComponent.cpp
+        Source/UI/RackView.cpp
+        Source/UI/TopBar.cpp)
 
     target_compile_definitions(AuraRack PUBLIC
         JUCE_WEB_BROWSER=0
@@ -109,4 +114,29 @@ if(AURA_BUILD_PLUGIN AND AURA_BUILD_TESTS)
     add_dependencies(aurarack_host_test AuraRack_VST3)
     add_test(NAME aurarack_host_test
              COMMAND aurarack_host_test "$<GENEX_EVAL:$<TARGET_PROPERTY:AuraRack_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+endif()
+
+# ---------------------------------------------------------------------------------------------
+# Test de l'éditeur : glisser-déposer et rendu PNG, sans fenêtre.
+if(AURA_BUILD_PLUGIN AND AURA_BUILD_TESTS)
+    juce_add_console_app(aurarack_ui_test PRODUCT_NAME "aurarack_ui_test")
+    target_sources(aurarack_ui_test PRIVATE
+        Tests/UiTest.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/Parameters.cpp
+        Source/UI/NextLookAndFeel.cpp
+        Source/UI/SlotComponent.cpp
+        Source/UI/RackView.cpp
+        Source/UI/TopBar.cpp)
+    target_compile_definitions(aurarack_ui_test PRIVATE
+        JucePlugin_Name="AuraRack"
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+    target_link_libraries(aurarack_ui_test PRIVATE
+        aura_rack_core
+        juce::juce_audio_processors
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    add_test(NAME aurarack_ui_test COMMAND aurarack_ui_test)
 endif()

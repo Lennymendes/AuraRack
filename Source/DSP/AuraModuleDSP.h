@@ -6,6 +6,7 @@
 
 #include "AuraDspCore.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <span>
 #include <string>
@@ -16,8 +17,8 @@ namespace aura
 enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb };
 inline constexpr int kNumModuleTypes = 8;
 
-/** Nombre de paramètres génériques par slot (le module le plus riche en utilise 9). */
-inline constexpr int kMaxModuleParams = 9;
+/** Nombre de paramètres génériques par slot (le module le plus riche en utilise 10). */
+inline constexpr int kMaxModuleParams = 10;
 
 //==============================================================================
 struct ParamSpec
@@ -94,6 +95,20 @@ struct ModuleInfo
     const char* shortName;   // « EQ » (pastille de slot)
     std::span<const ParamSpec> params;
     double defaultMixPercent = 100.0;   // Mix du slot appliqué quand on choisit ce module (Delay / Verb : 30 %)
+
+    /** Module à variantes (AuraComp : 3 algorithmes) : `variantParam` est l'index du paramètre de choix,
+        `variantMasks[v]` le masque des paramètres visibles pour la variante v (bit i = paramètre i).
+        Les paramètres masqués existent toujours (identifiants figés) mais le module les ignore. */
+    int variantParam = -1;
+    std::span<const std::uint32_t> variantMasks {};
+
+    /** Masque des paramètres à afficher pour la valeur physique du paramètre de variante. */
+    std::uint32_t visibleMask (double variantPlain) const noexcept
+    {
+        if (variantParam < 0 || variantMasks.empty()) return (1u << params.size()) - 1u;
+        const auto v = (std::size_t) std::clamp ((int) std::lround (variantPlain), 0, (int) variantMasks.size() - 1);
+        return variantMasks[v];
+    }
 };
 
 //==============================================================================

@@ -53,6 +53,7 @@ public:
     /** Nouvel ordre des slots (glisser-déposer), appliqué sans décrochage audio. */
     void setSlotOrder (const aura::SlotOrder& order);
     aura::SlotOrder getSlotOrder() const noexcept { return engine.getOrder(); }
+    std::uint64_t getSlotOrderPacked() const noexcept { return engine.getOrderPacked(); }
 
     /** Déplace un slot de la position `from` à la position `to` (indices dans l'ordre actuel). */
     void moveSlot (int fromPosition, int toPosition);

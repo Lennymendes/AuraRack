@@ -46,6 +46,19 @@ struct RackRouting
         return true;
     }
 
+    /** Ordre obtenu en retirant la position `from` et en l'insérant à la position `to` (les autres glissent). */
+    static SlotOrder moved (SlotOrder o, int from, int to) noexcept
+    {
+        if (from < 0 || from >= kNumSlots || to < 0 || to >= kNumSlots || from == to) return o;
+        const int slot = o[(std::size_t) from];
+        if (from < to)
+            for (int i = from; i < to; ++i) o[(std::size_t) i] = o[(std::size_t) i + 1];
+        else
+            for (int i = from; i > to; --i) o[(std::size_t) i] = o[(std::size_t) i - 1];
+        o[(std::size_t) to] = slot;
+        return o;
+    }
+
     static std::uint64_t pack (const SlotOrder& o) noexcept
     {
         std::uint64_t v = 0;
@@ -144,6 +157,23 @@ public:
     void setOrder (const SlotOrder& order) noexcept;
     SlotOrder getOrder() const noexcept { return RackRouting::unpack (requestedOrder.load (std::memory_order_acquire)); }
 
+    /** Même ordre, en un seul mot : une lecture atomique cohérente (comparaison bon marché côté interface). */
+    std::uint64_t getOrderPacked() const noexcept { return requestedOrder.load (std::memory_order_acquire); }
+
+    /** Déplace une position vers une autre par compare-and-swap : sûr même si une restauration d'état
+        change l'ordre au même instant (la boucle repart de la nouvelle valeur). Renvoie false si rien ne change. */
+    bool moveSlot (int fromPosition, int toPosition) noexcept
+    {
+        auto current = requestedOrder.load (std::memory_order_acquire);
+        for (;;)
+        {
+            const auto next = RackRouting::pack (RackRouting::moved (RackRouting::unpack (current), fromPosition, toPosition));
+            if (next == current) return false;
+            if (requestedOrder.compare_exchange_weak (current, next, std::memory_order_acq_rel, std::memory_order_acquire))
+                return true;
+        }
+    }
+
     /** Détruit les modules rendus par le thread audio. */
     void collectGarbage();
 
@@ -153,7 +183,9 @@ public:
     //==== Indicateurs (lecture depuis n'importe quel thread) ======================
     struct Meters
     {
-        std::array<std::atomic<float>, 2> inputPeak {}, outputPeak {};
+        // Crêtes en maintien : le thread audio ne fait que monter (un seul écrivain), l'interface lit et remet à zéro
+        // avec exchange(0). Au pire une crête s'affiche deux fois ; aucune n'est perdue entre deux images.
+        mutable std::array<std::atomic<float>, 2> inputPeak {}, outputPeak {};
         std::array<std::atomic<float>, kNumSlots> gainReductionDb {};
         std::atomic<int> activeLatency { 0 };
         std::atomic<bool> sidechainActive { false };
