@@ -89,7 +89,7 @@ x ──► Dry compensé (retard = latence du module, fondu 5 ms si elle change
 ### Barre globale (paramètres)
 
 Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack), **Sidechain Source** :
-*Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs exposés au futur éditeur :
+*Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
 ## Les 7 modules
@@ -201,5 +201,5 @@ dans l'état (`order="0,1,…"`).
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
   rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.
-- **L-Comp** : sans anticipation, un pic isolé peut dépasser ~0 dBFS l'espace de ~50 µs avant que le plafond doux ne le
-  rattrape ; le plafond (C¹, ADAA) borne la sortie à 0 dBFS.
+- **L-Comp** : sans anticipation, l'attaque de ~50 µs laisse passer le tout début d'un pic ; c'est le plafond doux
+  (C¹, ADAA) qui l'écrête, donc ce pic est légèrement saturé plutôt que comprimé. La sortie ne dépasse jamais 0 dBFS.
