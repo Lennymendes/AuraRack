@@ -25,7 +25,7 @@ juce::MouseEvent mouseEvent (juce::Component& on, juce::Point<float> pos, juce::
 
 void renderAudio (AuraRackProcessor& p, double fs, int blocks)
 {
-    juce::AudioBuffer<double> buf (3, 512);   // 2 canaux + Sidechain
+    juce::AudioBuffer<double> buf (4, 512);   // 2 canaux + bus Sidechain stéréo
     juce::MidiBuffer midi;
     for (int b = 0; b < blocks; ++b)
     {
@@ -34,7 +34,7 @@ void renderAudio (AuraRackProcessor& p, double fs, int blocks)
             const double t = (double) (b * 512 + i) / fs;
             const double kick = (std::fmod (t, 0.5) < 0.1) ? 0.9 * std::sin (2.0 * juce::MathConstants<double>::pi * 60.0 * t) : 0.0;
             const double music = 0.5 * std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * t) + 0.3 * std::sin (2.0 * juce::MathConstants<double>::pi * 3000.0 * t);
-            buf.setSample (0, i, music + kick); buf.setSample (1, i, music - kick * 0.5); buf.setSample (2, i, kick);
+            buf.setSample (0, i, music + kick); buf.setSample (1, i, music - kick * 0.5); buf.setSample (2, i, kick); buf.setSample (3, i, kick);
         }
         p.processBlock (buf, midi);
     }
@@ -43,13 +43,14 @@ void renderAudio (AuraRackProcessor& p, double fs, int blocks)
 
 int main (int argc, char** argv)
 {
+    std::setvbuf (stdout, nullptr, _IONBF, 0);   // une panne doit laisser la trace de la dernière étape
     juce::ScopedJuceInitialiser_GUI juceInit;
     std::puts ("AuraRack — test de l'éditeur");
 
     const double fs = 384000.0;
     AuraRackProcessor processor;
     processor.setProcessingPrecision (juce::AudioProcessor::doublePrecision);
-    processor.setPlayConfigDetails (3, 2, fs, 512);
+    processor.setPlayConfigDetails (4, 2, fs, 512);
     processor.prepareToPlay (fs, 512);
 
     auto setParam = [&] (const juce::String& id, float plain)
@@ -107,21 +108,21 @@ int main (int argc, char** argv)
     for (int i = 0; i < 120; ++i) editor.tickForTesting (1.0f / 60.0f);
     check (rack->getDisplayedPosition (9) == 0 && rack->getDisplayedPosition (0) == 9, "Ordre changé hors interface : la vue suit");
 
-    // --- moveSlot concurrent : 4 fils s'agitent pendant que l'interface tourne, l'ordre reste une permutation valide.
+    // --- Rafale de déplacements depuis le thread de messages, interface qui tourne : la vue suit toujours l'ordre du moteur.
     {
-        std::atomic<bool> stop { false };
-        std::vector<std::thread> threads;
-        for (int t = 0; t < 3; ++t)
-            threads.emplace_back ([&, t] { unsigned x = 17u + (unsigned) t; while (! stop) { x = x * 1664525u + 1013904223u; processor.moveSlot ((int) (x >> 8) % 10, (int) (x >> 16) % 10); } });
-        bool valid = true;
+        unsigned x = 17u;
+        bool followed = true;
         for (int i = 0; i < 200; ++i)
         {
-            valid = valid && aura::RackRouting::isValid (processor.getSlotOrder());
+            x = x * 1664525u + 1013904223u;
+            processor.moveSlot ((int) (x >> 8) % 10, (int) (x >> 16) % 10);
             editor.tickForTesting (1.0f / 60.0f);
         }
-        stop = true;
-        for (auto& th : threads) th.join();
-        check (valid && aura::RackRouting::isValid (processor.getSlotOrder()), "moveSlot concurrent (CAS) : l'ordre reste une permutation valide");
+        for (int i = 0; i < 120; ++i) editor.tickForTesting (1.0f / 60.0f);
+        const auto order = processor.getSlotOrder();
+        for (int pos = 0; pos < 10; ++pos)
+            followed = followed && rack->getDisplayedPosition (order[(std::size_t) pos]) == pos;
+        check (aura::RackRouting::isValid (order) && followed, "200 déplacements enchaînés : permutation valide, vue synchronisée");
     }
 
     // --- Rendu PNG.

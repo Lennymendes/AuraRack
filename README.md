@@ -37,9 +37,9 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
 | `Source/UI/` | `NextLookAndFeel` (vectoriel), `RackView` (grille + glisser-déposer), `SlotComponent`, `TopBar`, `Widgets.h` |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (78 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (83 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, `moveSlot` concurrent, rendu PNG (7 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, rendu PNG (7 vérifications) |
 
 ## Architecture audio
 
@@ -150,7 +150,7 @@ de l'AuraComp existent toujours ; chaque algorithme n'utilise que les siens (l'i
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 78 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
+`aurarack_dsp_test` (sans JUCE, 83 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).

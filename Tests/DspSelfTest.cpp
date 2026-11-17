@@ -965,6 +965,37 @@ static void testStress()
     check (blocks.load() > 100, "Le thread audio n'a jamais été bloqué (blocs traités)", (double) blocks.load());
 }
 
+static void testMoveSlot()
+{
+    std::puts("\n== 11. RackEngine::moveSlot (compare-and-swap)");
+    check (RackRouting::moved (RackRouting::identity(), 0, 3) == SlotOrder { 1, 2, 3, 0, 4, 5, 6, 7, 8, 9 }, "moved(0 -> 3) : les slots intermédiaires glissent");
+    check (RackRouting::moved (RackRouting::identity(), 7, 2) == SlotOrder { 0, 1, 7, 2, 3, 4, 5, 6, 8, 9 }, "moved(7 -> 2)");
+    check (RackRouting::moved (RackRouting::identity(), 4, 4) == RackRouting::identity(), "moved(4 -> 4) : sans effet");
+
+    RackEngine e;
+    check (! e.moveSlot (5, 5) && ! e.moveSlot (-1, 3) && ! e.moveSlot (0, 10), "Indices invalides ou identiques : refusés");
+
+    // 4 fils déplacent en rafale ; un cinquième lit l'ordre en un mot : toujours une permutation valide.
+    std::atomic<bool> stop { false }, valid { true };
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back ([&, t]
+        {
+            unsigned x = 101u + (unsigned) t;
+            while (! stop.load())
+            {
+                x = x * 1664525u + 1013904223u;
+                e.moveSlot ((int) (x >> 8) % kNumSlots, (int) (x >> 16) % kNumSlots);
+            }
+        });
+    std::thread reader ([&] { while (! stop.load()) if (! RackRouting::isValid (RackRouting::unpack (e.getOrderPacked()))) valid = false; });
+    std::this_thread::sleep_for (std::chrono::milliseconds (400));
+    stop = true;
+    for (auto& th : threads) th.join();
+    reader.join();
+    check (valid.load() && RackRouting::isValid (e.getOrder()), "4 fils en rafale : l'ordre reste une permutation valide");
+}
+
 //==============================================================================
 int main (int argc, char** argv)
 {
@@ -972,7 +1003,7 @@ int main (int argc, char** argv)
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress },
+        { "stress", testStress }, { "move", testMoveSlot },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)
