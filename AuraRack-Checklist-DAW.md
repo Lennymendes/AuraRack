@@ -50,5 +50,13 @@ latence de lecture ≥ 256 éch., un second plugin de référence (compresseur /
 - [ ] CPU à 384 kHz avec 10 modules actifs : pas de craquements ; arrêt / démarrage de la lecture sans bruit.
 - [ ] Changer de module d'un slot en lecture : fondu sans clic ; la latence annoncée se met à jour.
 
+## 6. Étape 5 : auto-gain, A / B, presets, utilitaire, latence
+- [ ] **Auto-gain (slot)** : bouton `AGC` sur V9C3 / W9BMK1 : changer Ratio, Make-Up, Threshold : le niveau RMS en sortie revient (≈ 5 s) au niveau d'entrée ; comparer avec le bypass (même niveau perçu) ; la correction affichée (« AGC −x,x ») reste dans ±12 dB ; **silence / pause** : le gain ne dérive pas ; bypass puis réactivation : pas de saut de niveau.
+- [ ] **Auto-gain (rack)** : bouton `AUTO GAIN` de la barre sur un bus complet : niveau de sortie ≈ niveau d'entrée ; désactivé : sortie inchangée.
+- [ ] **A / B** : régler une chaîne, `A>B`, modifier B (changer un module, un réglage, l'ordre), basculer A / B en lecture : **sans clic**, retour exact ; fermer / rouvrir la session : A, B et l'emplacement actif retrouvés.
+- [ ] **Presets** : charger Voix, Piano / Acoustique, Bus, Mastering sur du matériel réel : cohérents, sans saturation intempestive ; noter ce qui doit être réglé (les valeurs n'ont pas été écoutées) ; `*` apparaît après retouche ; « Rack vide ».
+- [ ] **Utilitaire stéréo** : Width 0 % = mono, 200 % = très large (surveiller la compatibilité mono) ; **Bass Mono** 100 / 150 Hz sur un kick / basse stéréo : le grave se centre, aucune coloration du centre ; Mono : bascule sans clic ; **corrélation** : proche de +1 sur une source mono, négative sur un signal en opposition de phase.
+- [ ] **Latence / CPU** : la **latence totale** de la barre = latence rapportée par le DAW (PDC) ; elle change avec le Lookahead du E9DS (1 ms à 48 kHz = 48 éch.) ; la piste reste alignée avec une référence ; le **CPU** de la barre ressemble à celui du DAW (à 384 kHz, 10 modules).
+
 ## Notes à relever
 Pour chaque échec : hôte + version, OS, fréquence, buffer, module, réglages, lecture / offline, description (clic, dérive, latence, crash), et si reproductible.
