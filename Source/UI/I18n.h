@@ -67,8 +67,8 @@ inline constexpr std::array<std::array<const char*, (std::size_t) Lang::count>, 
     /* modW9b       */ { "Compresseur FET (esprit CL1B), Auto Focus", "FET compressor (CL1B style), Auto Focus" },
     /* modL9a       */ { "Nivelleur opto (esprit LA-2A)", "Optical leveler (LA-2A style)" },
     /* modE9ds      */ { "De-esser : ma\xc3\xaetrise la sibilance sans zozotement", "De-esser: tames sibilance without lisping" },
-    /* modV9c3      */ { "Compresseur VCA quadruple : douceur et caract\xc3\xa8re, Auto Focus", "Quad-VCA compressor: smooth, characterful, Auto Focus" },
-    /* modV9p2      */ { "Pr\xc3\xa9ampli double canal : transfo en entr\xc3\xa9e, gain par crans", "Dual-channel preamp: input transformer, stepped gain" },
+    /* modV9c3      */ { "Compresseur VCA quadruple : douceur et caract\xc3\xa8" "re, Auto Focus", "Quad-VCA compressor: smooth, characterful, Auto Focus" },
+    /* modV9p2      */ { "Pr\xc3\xa9" "ampli double canal : transfo en entr\xc3\xa9" "e, gain par crans", "Dual-channel preamp: input transformer, stepped gain" },
 }};
 
 inline Lang& current() noexcept { static Lang l = Lang::fr; return l; }
