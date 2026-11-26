@@ -3,21 +3,26 @@
 // (352,8 / 384 kHz). Conception AuraRack : constantes calibrées par mesure, pas par comparaison avec le matériel.
 //
 //   Contrôles : Gain (12 … 72 dB par pas de 6) + Fine (0 … +6 dB), HPF (Off / 80 / 120 Hz, 12 dB/oct), Pad −20 dB,
-//   Phase Ø (Off / L / R / L+R), Input (Mic / Inst-DI), 48V (indicateur d'état), Link (Dual / Linked) + R Offset.
+//   Phase Ø (Off / L / R / L+R), Input (Mic / Inst-DI), Link (Dual / Linked) + R Offset. Chaque contrôle agit sur le son
+//   (le commutateur 48V, purement indicatif, a été supprimé : un plugin n'alimente pas de micro).
 //
-//   ÉTALONNAGE (important, c'est un plugin et non un micro) : le signal reçu est DÉJÀ numérisé. Le gain net appliqué est
-//   donc Gain + Fine − 36 dB − Pad : 36 dB = gain unité (position nominale d'un micro dynamique), 12 dB = −24 dB net,
-//   72 dB = +36 dB net. 0 dBu = −18 dBFS (+18 dBu = 0 dBFS). Plafond de l'étage : +24 dBu (+6 dBFS) ; le voyant passe au rouge
-//   à +19 dBu (+1 dBFS), c'est-à-dire AVANT l'écrêtage de l'étage.
+//   ÉTALONNAGE : le signal reçu est DÉJÀ numérisé. Gain net = Gain + Fine − 36 dB − Pad : 36 dB = gain unité, 12 dB = −24 dB net,
+//   72 dB = +36 dB net. 0 dBu = −18 dBFS (+18 dBu = 0 dBFS). Marge : +24 dBu (+6 dBFS) ; le voyant passe au rouge à +19 dBu.
 //
-//   Chaîne : Pad / Gain (lissés 20 ms, aucun clic aux changements de cran) ─► « transformateur » (saturation douce des graves,
-//   trajet Mic seulement ; Inst/DI le contourne par fondu de 20 ms) ─► HPF (fondu 10 ms) ─► polarité (rampe 5 ms)
-//   ─► étage discret à plafond +24 dBu (tanh à gain unité, un peu d'harmonique 2, ADAA sous 176,4 kHz) ─► sortie.
+//   Chaîne : Pad / Gain (lissés 20 ms) ─► entrée (Mic : transformateur type JT-16 1:2 ; Inst/DI : directement sur l'étage)
+//   ─► étage discret « Twin OPA » (harmoniques 2 et 3 additifs) ─► HPF (fondu 10 ms) ─► polarité (rampe 5 ms) ─► sortie
+//   symétrique propre (type THAT 1646 : linéaire jusqu'à +21 dBu, genou doux jusqu'à +24 dBu, ADAA sous 176,4 kHz).
 //
+//   - Mic : transformateur 1:2 très linéaire (+6 dB passifs, déphasage faible, capacité parasite faible, forte tenue en niveau) ;
+//     il prend 6 dB du gain, l'étage Twin OPA fournit le reste à pleine charge : harmoniques 2 et 3 plus riches, son ouvert, tranchant.
+//     Le transformateur ajoute seulement un pôle HF à 69 kHz (−1 dB à 35 kHz) et une non-linéarité de noyau minuscule sous 60 Hz,
+//     qui ne devient mesurable qu'au-dessus de +14 dBu.
+//   - Inst/DI : pas de transformateur ; l'étage travaille avec plus de contre-réaction (≈ 0,3 × les harmoniques du trajet Mic)
+//     et la bande passante n'a aucune limitation HF : plus neutre, plus lisse. Différence mesurable à tout réglage.
+//   - Bande passante : 10 Hz … 35 kHz à ±1 dB (pôle à 4,5 Hz contre le continu ; pôle HF à 69 kHz dès 192 kHz d'échantillonnage).
+//   - Harmoniques : termes additifs calculés sur le signal passe-bas (min(20 kHz, 0,45·fs/3)), ils ne se replient donc jamais.
 //   - Dual : chaque canal a son gain (R = L + R Offset) ; Linked : les deux canaux ont le même gain.
-//   - 48V : simple mémoire d'état affichée dans le rack (un plugin n'alimente pas de micro) : aucun effet sur le son.
-//   - Voyant : crête à l'entrée de l'étage (takeStatusPeak, linéaire) ; getMeterAux = niveau de crête en dBu à décroissance lente.
-//   - Constantes en secondes, calcul en double : même réponse de 44,1 à 384 kHz. Latence 0.
+//   - Voyant : crête à l'entrée de l'étage de sortie ; getMeterAux = niveau de crête en dBu à décroissance lente. Latence 0.
 
 #pragma once
 
@@ -28,9 +33,9 @@ namespace aura
 class AuraV9P2 final : public AuraModuleDSP
 {
 public:
-    enum Param { gain, fine, hpf, pad, phase, input, phantom, link, rOffset, numParams };
+    enum Param { gain, fine, hpf, pad, phase, input, link, rOffset, numParams };
 
-    static constexpr double kUnityGainDb = 36.0, kDbuToDbfs = -18.0, kCeilingDbu = 24.0, kClipLampDbu = 19.0;
+    static constexpr double kUnityGainDb = 36.0, kDbuToDbfs = -18.0, kCeilingDbu = 24.0, kClipLampDbu = 19.0, kLinearDbu = 21.0;
 
     static const ModuleInfo& info() noexcept
     {
@@ -40,7 +45,6 @@ public:
         static constexpr const char* pads[]     = { "Off", "-20 dB" };
         static constexpr const char* phases[]   = { "Off", "L", "R", "L+R" };
         static constexpr const char* inputs[]   = { "Mic", "Inst/DI" };
-        static constexpr const char* phantoms[] = { "Off", "48V" };
         static constexpr const char* links[]    = { "Dual", "Linked" };
         static constexpr ParamSpec specs[] = {
             { "Gain",     "",   0.0, 10.0, 4.0, S::choice, gains, 11 },
@@ -49,7 +53,6 @@ public:
             { "Pad",      "",   0.0, 1.0,  0.0, S::choice, pads, 2 },
             { "Phase",    "",   0.0, 3.0,  0.0, S::choice, phases, 4 },
             { "Input",    "",   0.0, 1.0,  0.0, S::choice, inputs, 2 },
-            { "48V",      "",   0.0, 1.0,  0.0, S::choice, phantoms, 2 },
             { "Link",     "",   0.0, 1.0,  1.0, S::choice, links, 2 },
             { "R Offset", "dB", -6.0, 6.0, 0.0, S::linear },
         };
@@ -79,7 +82,6 @@ public:
                             polL.setTarget ((p & 1) != 0 && p != 2 ? -1.0 : 1.0);   // 1 = L, 3 = L+R
                             polR.setTarget (p >= 2 ? -1.0 : 1.0); break; }         // 2 = R, 3 = L+R
             case input:   diAmount.setTarget (v >= 0.5 ? 1.0 : 0.0); break;
-            case phantom: break;   // état affiché seulement
             case link:    linked = v >= 0.5; updateGains(); break;
             case rOffset: offsetDb = v; updateGains(); break;
             default: break;
@@ -89,9 +91,9 @@ public:
     void reset() noexcept override
     {
         for (auto* s : { &gainL, &gainR, &hpAmount, &diAmount, &polL, &polR }) s->reset (s->getTarget());
-        hp.reset();
-        lowpass.reset();
-        stage.reset();
+        hp.reset(); coreLp.reset(); distLp1.reset(); distLp2.reset();
+        for (int c = 0; c < 2; ++c) { dcIn[c] = dcSq[c] = hfState[c] = 0.0; xPrev[c] = 0.0; }
+        primPrev[0] = primPrev[1] = 0.0;
         peakAux = -120.0;
         statusPeak = 0.0;
     }
@@ -100,32 +102,52 @@ public:
     {
         for (int i = 0; i < n; ++i)
         {
-            double xl = L[i] * dsp::dbToGain (gainL.next()), xr = R[i] * dsp::dbToGain (gainR.next());
+            double x[2] = { L[i] * dsp::dbToGain (gainL.next()), R[i] * dsp::dbToGain (gainR.next()) };
+            const double di = diAmount.next(), mic = 1.0 - di;
 
-            // « Transformateur » (trajet Mic) : saturation douce des graves seuls ; Inst/DI le contourne.
-            const double di = diAmount.next();
-            if (di < 1.0)
+            // Entrée : pôle 4,5 Hz (continu) ; Mic : pôle HF du transformateur + noyau (graves seulement, tout petit).
+            double lo[2];
+            for (int c = 0; c < 2; ++c)
             {
-                const double lowL = lowpass.processSample (xl, 0), lowR = lowpass.processSample (xr, 1);
-                xl += (1.0 - di) * (kCore * std::tanh (lowL / kCore) - lowL);
-                xr += (1.0 - di) * (kCore * std::tanh (lowR / kCore) - lowR);
+                dcIn[c] += dcCoefIn * (x[c] - dcIn[c]);
+                x[c] -= dcIn[c];
+                lo[c] = coreLp.processSample (x[c], c);
             }
-            else { lowpass.processSample (xl, 0); lowpass.processSample (xr, 1); }
+            if (mic > 0.0)
+                for (int c = 0; c < 2; ++c)
+                {
+                    if (hfActive) { hfState[c] += hfCoef * (x[c] - hfState[c]); x[c] += mic * (hfState[c] - x[c]); }
+                    x[c] += mic * kCoreK * kCeilingLin * std::pow (lo[c] / kCeilingLin, 3.0) * -1.0;
+                }
+
+            // Étage Twin OPA : harmoniques additifs ∝ niveau (alias-free : calculés sur le signal passe-bas).
+            const double d = opaDepth * (mic + kDiDepth * di);
+            if (d > 1.0e-9)
+            {
+                const double l0 = distLp2.processSample (distLp1.processSample (x[0], 0), 0), l1 = distLp2.processSample (distLp1.processSample (x[1], 1), 1);
+                const double u[2] = { l0 / kCeilingLin, l1 / kCeilingLin };
+                for (int c = 0; c < 2; ++c)
+                {
+                    const double sq = u[c] * u[c];
+                    dcSq[c] += dcCoefIn * (sq - dcSq[c]);
+                    x[c] += d * kCeilingLin * (-kC3 * sq * u[c] + kC2 * (sq - dcSq[c]));
+                }
+            }
 
             const double hpa = hpAmount.next();
             if (hpa > 0.0)
             {
-                const double hl = hp.processSample (xl, 0), hr = hp.processSample (xr, 1);
-                xl += hpa * (hl - xl);
-                xr += hpa * (hr - xr);
+                const double hl = hp.processSample (x[0], 0), hr = hp.processSample (x[1], 1);
+                x[0] += hpa * (hl - x[0]);
+                x[1] += hpa * (hr - x[1]);
             }
 
-            xl *= polL.next();
-            xr *= polR.next();
+            x[0] *= polL.next();
+            x[1] *= polR.next();
 
-            statusPeak = std::max (statusPeak, std::max (std::abs (xl), std::abs (xr)));
-            L[i] = stage.process (xl, 0);
-            R[i] = stage.process (xr, 1);
+            statusPeak = std::max (statusPeak, std::max (std::abs (x[0]), std::abs (x[1])));
+            L[i] = output (x[0], 0);
+            R[i] = output (x[1], 1);
         }
         // Niveau de crête en dBu, décroissance lente (≈ 20 dB/s) pour l'affichage.
         const double peakDbu = statusPeak > 1.0e-9 ? dsp::gainToDb (statusPeak) - kDbuToDbfs : -120.0;
@@ -143,7 +165,10 @@ public:
     double getMeterAux() const noexcept override { return peakAux; }
 
 private:
-    static constexpr double kCore = 2.0;   // « noyau » du transformateur : les graves se compriment au-delà de ≈ +24 dBu
+    static constexpr double kCeilingLin = 1.9952623149688795;   // +24 dBu en pleine échelle (+6 dBFS)
+    static constexpr double kKneeLin = 1.4125375446227544;   // +21 dBu = +3 dBFS
+    static constexpr double kCoreK = 0.0030;   // noyau du transformateur : H3 ≈ −110 dBc à +14 dBu sous 60 Hz
+    static constexpr double kC3 = 0.020, kC2 = 0.0040, kDiDepth = 0.30;
 
     void prepareInternal() override
     {
@@ -151,12 +176,41 @@ private:
         hpAmount.prepare (sampleRate, 10.0);
         diAmount.prepare (sampleRate, 20.0);
         for (auto* s : { &polL, &polR }) s->prepare (sampleRate, 5.0);
-        lowpass.setup (dsp::TptSvf::Type::lowPass, 60.0, 0.70710678118654752, 0.0, sampleRate);
-        hp.setup (dsp::TptSvf::Type::highPass, 80.0, 0.70710678118654752, 0.0, sampleRate);
-        // Plafond +24 dBu = +6 dBFS : a = 1 / 1,995.
-        stage.prepare (sampleRate, 1.0 / dsp::dbToGain (kCeilingDbu + kDbuToDbfs), 0.04);
+        coreLp.setup (dsp::TptSvf::Type::lowPass, 60.0, 0.70710678118654752, 0.0, sampleRate);
+        hp.setup (dsp::TptSvf::Type::highPass, hpfIndex == 2 ? 120.0 : 80.0, 0.70710678118654752, 0.0, sampleRate);
+        const double fc = std::min (20000.0, 0.45 * sampleRate / 3.0);
+        distLp1.setup (dsp::TptSvf::Type::lowPass, fc, 0.70710678118654752, 0.0, sampleRate);
+        distLp2.setup (dsp::TptSvf::Type::lowPass, fc, 0.70710678118654752, 0.0, sampleRate);
+        dcCoefIn = compdetail::alpha (1.0 / (2.0 * dsp::kPi * 4.5), sampleRate);
+        // Pôle HF du transformateur (−1 dB à 35 kHz → fc = 68,9 kHz) : n'existe qu'au-delà de ≈ 153 kHz d'échantillonnage.
+        const double fcHf = 35000.0 / std::sqrt (std::pow (10.0, 0.1) - 1.0);
+        hfActive = fcHf < 0.45 * sampleRate;
+        hfCoef = hfActive ? compdetail::alpha (1.0 / (2.0 * dsp::kPi * fcHf), sampleRate) : 0.0;
         polL.reset (1.0); polR.reset (1.0);
+        for (int c = 0; c < 2; ++c) { xPrev[c] = 0.0; primPrev[c] = 0.0; }
         updateGains();
+    }
+
+    /** Sortie symétrique propre : identité jusqu'à +21 dBu, genou tanh jusqu'à +24 dBu (C¹) ; ADAA du 1er ordre sous 176,4 kHz. */
+    double output (double x, int c) noexcept
+    {
+        const double w = kCeilingLin - kKneeLin;
+        auto f = [&] (double v) { const double a = std::abs (v); return a <= kKneeLin ? v : std::copysign (kKneeLin + w * std::tanh ((a - kKneeLin) / w), v); };
+        if (sampleRate >= 176400.0 || std::abs (x) < 0.5 * kKneeLin && std::abs (xPrev[c]) < 0.5 * kKneeLin)
+        {
+            xPrev[c] = x; primPrev[c] = prim (x, w);
+            return f (x);
+        }
+        const double pr = prim (x, w), dx = x - xPrev[c];
+        const double y = std::abs (dx) > 1.0e-9 ? (pr - primPrev[c]) / dx : f (0.5 * (x + xPrev[c]));
+        xPrev[c] = x; primPrev[c] = pr;
+        return y;
+    }
+    double prim (double x, double w) const noexcept
+    {
+        const double a = std::abs (x);
+        if (a <= kKneeLin) return 0.5 * a * a;
+        return 0.5 * kKneeLin * kKneeLin + kKneeLin * (a - kKneeLin) + w * w * compdetail::logCosh ((a - kKneeLin) / w);
     }
 
     void updateGains() noexcept
@@ -164,6 +218,8 @@ private:
         const double l = netGainDb (gainIndex, fineDb, padOn);
         gainL.setTarget (l);
         gainR.setTarget (linked ? l : l + offsetDb);
+        // Part de gain fournie par l'étage Twin OPA (plus de gain = plus d'harmoniques) : 0,4 … 1,0 de 12 à 72 dB.
+        opaDepth = 0.4 + 0.6 * ((double) gainIndex * 6.0 + fineDb) / 60.0;
     }
 
     int gainIndex = 4, hpfIndex = 0;
@@ -171,8 +227,10 @@ private:
     bool padOn = false, linked = true;
 
     dsp::OnePoleSmoother gainL, gainR, hpAmount, diAmount, polL, polR;
-    dsp::TptSvf hp, lowpass;
-    compdetail::SatStage stage;
+    dsp::TptSvf hp, coreLp, distLp1, distLp2;
+    double dcIn[2] { 0, 0 }, dcSq[2] { 0, 0 }, hfState[2] { 0, 0 }, xPrev[2] { 0, 0 }, primPrev[2] { 0, 0 };
+    double dcCoefIn = 0.0, hfCoef = 0.0, opaDepth = 0.6;
+    bool hfActive = false;
 };
 
 } // namespace aura

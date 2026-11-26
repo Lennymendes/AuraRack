@@ -112,7 +112,7 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **L9A** | Amplificateur de nivellement opto (esprit LA-2A) avec façade dédiée : voir la section « L9A ». | Peak Reduction, Gain, Mode, Meter |
 | **E9DS** | De-esser à bande sibilante dynamique avec façade dédiée : voir la section « E9DS ». | Threshold, Frequency, Width, Range, Release, Mode, Listen, Lookahead |
 | **V9C3** | Compresseur VCA quadruple (esprit Vertigo VSC-3) à Auto Focus : voir la section « V9C3 ». | Threshold (dBu), Ratio, Attack, Release, Make-Up, SC HPF, Detect, Mode, Auto Focus, Focus |
-| **V9P2** | Préampli double canal (esprit Vertigo VSP-2) : voir la section « V9P2 ». | Gain, Fine, HPF, Pad, Phase, Input, 48V, Link, R Offset |
+| **V9P2** | Préampli double canal (esprit Vertigo VSP-2) : voir la section « V9P2 ». | Gain, Fine, HPF, Pad, Phase, Input, Link, R Offset |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -275,9 +275,13 @@ Mesures (banc DSP) : réduction statique = théorie à 0,04 dB près (48 et 384 
 | Make-Up | 0 … 24 dB |
 | Auto Focus / Focus | seuil piloté par le `FocusTracker` (celui du W9BMK1) vers **1 … 12 dB de réduction moyenne**, sans pompage ; le potard Threshold affiche le seuil effectif (dBu) |
 
-**Couleur.** Entrée « transformateur » (saturation douce des graves, < 120 Hz) puis étage de sortie symétrique à saturation
-progressive : le taux de distorsion croît avec la réduction de gain **et** le Make-Up. Au repos (pas de réduction, Make-Up 0)
-le module est quasi transparent (mesuré : gain ±0,05 dB, H2 < −55 dB, H3 < −65 dB).
+**Couleur (modèle « Quad Discrete VCA 1979 », allégé).** Plus aucun étage saturant dans le chemin du signal (ni « transformateur »
+des graves, ni coloration permanente, rien dans le bas-médium, aucune perte d'aigus). Au repos (pas de réduction, Make-Up 0) la sortie
+est **identique à l'entrée bit pour bit**, y compris à 20 kHz. La distorsion du VCA est un terme additif (H3 et un peu de H2) ∝ (GR/20)² :
+mesuré H3 ≈ −93 dBc à 3 dB de GR, −76 dBc à 8 dB, −63 dBc à 16 dB ; le Make-Up n'ajoute aucune coloration (gain exact). Le terme est calculé
+sur le signal passe-bas (min(20 kHz, 0,45·fs/3)) : aucun repliement (mesuré < −110 dBc, 18 kHz comprimé à 44,1 kHz).
+**Soft (TipToe)** : réduction = 0,875·(o − 6·atan(o/6)) (pente nulle au seuil, croît vers 8:1, sans coude) ; Auto Fast 30 ms / 350 ms,
+Auto Slow 120 ms / 1,8 s.
 
 **Affichage** (`VertigoFaceplate`) : bargraphe de réduction à zone fine (0–6 dB sur la moitié gauche) puis jusqu'à 24 dB,
 seuil effectif en dBu, repère de cible en Auto Focus.
@@ -294,14 +298,20 @@ Dual : le canal faible reste intact ; M/S : Mid −4 dB et plus, Side ±0,3 dB ;
 
 - **Gain** 12 … 72 dB par pas de 6 dB + **Fine** 0 … +6 dB ; **le gain net est relatif à 36 dB (= unité)** : un rack n'a pas de
   micro derrière, le module garde donc le niveau d'un signal de ligne au centre de la plage (Gain net = Gain + Fine − 36 − Pad).
-- **HPF** Off / 80 Hz / 120 Hz (12 dB/oct) ; **Pad** −20 dB ; **Phase Ø** Off / L / R / L+R ; **Input** Mic / **Inst-DI**
-  (contourne le « transformateur » d'entrée, fondu de 20 ms) ; **Link** Dual (deux canaux, **R Offset** ±6 dB) ou Linked.
-- **48V** : **indicateur d'état seulement, sans effet audio** (aucune alimentation fantôme dans un plugin).
-- Chaîne : gains lissés (20 ms) → saturation « transformateur » des graves (< 60 Hz) → HPF (fondu 10 ms) → polarité (rampe 5 ms) →
-  étage à plafond +24 dBu (biais léger : H2 puis H3 croissants avec le niveau).
+- **HPF** Off / 80 Hz / 120 Hz (12 dB/oct) ; **Pad** −20 dB ; **Phase Ø** Off / L / R / L+R ; **Input** Mic / **Inst-DI** ;
+  **Link** Dual (deux canaux, **R Offset** ±6 dB) ou Linked. **Le commutateur 48V a été supprimé** (il n'avait aucun effet audio) ;
+  tous les contrôles de la façade agissent sur le son.
+- **Mic** : transformateur type **JT-16 1:2** très linéaire (+6 dB passifs, phase quasi linéaire, faible capacité, forte tenue en niveau)
+  qui prend 6 dB du gain : l'étage **Twin OPA** fournit le reste « à fond » → harmoniques 2 et 3 plus riches, son ouvert et tranchant.
+  Le transformateur n'ajoute qu'un pôle HF à 69 kHz (−1 dB à 35 kHz, actif dès 192 kHz) et une non-linéarité de noyau minuscule sous 60 Hz.
+  **Inst/DI** : directement sur l'étage, avec plus de contre-réaction (≈ 0,3 × les harmoniques du Mic) et sans limite HF : plus neutre.
+  Mesuré à +18 dBu : H3 −60 dBc (Mic) / −71 dBc (DI), H2 −62 / −73 dBc ; à 35 kHz −0,89 / 0,00 dB.
+- **Bande passante** 10 Hz … 35 kHz à ±1 dB (mesuré à 384 kHz, Mic et DI : ≤ 0,89 dB). **Sortie** type THAT 1646 : linéaire jusqu'à
+  +21 dBu, genou tanh C¹ jusqu'à +24 dBu (ADAA sous 176,4 kHz) ; H3 < −72 dBc à +18 dBu en DI. Harmoniques de l'étage calculés sur le
+  signal passe-bas : pas de repliement (< −85 dBc à 44,1 kHz avec 15 kHz dans le genou).
+- Chaîne : gains lissés (20 ms) → entrée (Mic / DI) → étage Twin OPA → HPF (fondu 10 ms) → polarité (rampe 5 ms) → sortie propre.
 - Mesures : gains par cran, Fine et Pad exacts à 0,05 dB ; HPF −12 dB une octave sous la coupure à 44,1 et 384 kHz ; polarité ;
-  Dual / Linked ; **aucun clic** (cran de gain, polarité, Mic → DI, HPF, Pad : pente ≤ 1,6× celle du sinus) ; H3 < −65 dB à 0 dBu,
-  distorsion croissante en surcharge, plafond ≈ +6 dBFS, voyant vert / rouge ; gain identique à 44,1 et 384 kHz.
+  Dual / Linked ; **aucun clic** (cran de gain, polarité, Mic → DI, HPF, Pad) ; plafond ≈ +6 dBFS, voyant vert / rouge ; gain identique à 44,1 et 384 kHz.
 - Façade : barre de niveau d'entrée en dBu (le module publie la crête **avant** l'étage de saturation), voyants Signal (vert) / Clip
   (rouge), gain net affiché ; R Offset estompé en mode Linked.
 
@@ -451,8 +461,8 @@ dans l'état (`order="0,1,…"`).
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
 - **E9DS** : conception propre à AuraRack (la spécification du E9DS du lecteur AURA n'est pas disponible) ; détection sur la bande seule (pas de détection relative au niveau large-bande), anticipation optionnelle (Lookahead, jusqu'à 2 ms, qui ajoute sa latence) ; avec Lookahead Off (latence 0, attaque 0,25 ms) un « t » ou « ch » très bref peut passer avant la réduction. Constantes validées par mesure sur signaux synthétiques, **pas à l'écoute sur de vraies voix** : à valider.
-- **V9C3** : **Threshold, Ratio, Attack, Release, Make-Up et Focus sont communs aux deux voies** en Dual et M/S (pas de réglages séparés par voie) ; **pas de compensation d'égale sonie** au changement de Ratio ; les modèles « transformateur » et « étage symétrique » sont des approximations calibrées par mesure, pas une comparaison avec le matériel ; Soft utilise une approximation (ratio 4, sans genou) dans l'Auto Focus (validé à ±1,5 dB).
-- **V9P2** : le Gain est **relatif à 36 dB** (pas de gain micro réel) ; **48V = indicateur seulement** ; pas d'impédance d'entrée ni de modèle de micro ; transformateur et étage en saturation douce, **non comparés au matériel**.
+- **V9C3** : **Threshold, Ratio, Attack, Release, Make-Up et Focus sont communs aux deux voies** en Dual et M/S (pas de réglages séparés par voie) ; **pas de compensation d'égale sonie** au changement de Ratio ; la distorsion du VCA est une approximation calibrée par mesure, pas une comparaison avec le matériel ; Soft utilise une approximation (ratio 4, sans genou) dans l'Auto Focus (validé à ±1,5 dB).
+- **V9P2** : le Gain est **relatif à 36 dB** (pas de gain micro réel) ; plus de 48V ; pas d'impédance d'entrée ni de modèle de micro ; JT-16 / Twin OPA / THAT 1646 sont des modèles calibrés par mesure, **non comparés au matériel** ; l'ordre des paramètres a changé (sessions V9P2 enregistrées avant cette version : Link / R Offset à re-régler).
 - **Validation DAW** : V9C3, V9P2, le Lookahead E9DS et les façades n'ont **pas** été essayés dans un vrai DAW : suivre `AuraRack-Checklist-DAW.md`.
 - **Auto-gain** : égalisation de niveau RMS (pas de sonie), lente par construction (≈ 5 s), limitée à ±12 dB, gelée sous −60 dBFS ; sur du matériel très dynamique elle peut gommer l'effet voulu d'un compresseur de caractère (à utiliser pour comparer, pas systématiquement).
 - **Presets** : points de départ établis par mesure, **non écoutés** ; ils écrasent le rack (A / B pour comparer). Pas de presets utilisateur nommés (A / B et la session font office de snapshots).

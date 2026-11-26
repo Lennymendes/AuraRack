@@ -20,9 +20,9 @@ latence de lecture ≥ 256 éch., un second plugin de référence (compresseur /
 - [ ] **V9P2** sur une piste piano (ou DI de guitare / basse) : Input **Inst / DI** et Mic : basculement **sans clic** en lecture.
 - [ ] Gain par crans 36 → 42 → 48 dB : **pas de clic**, niveau ± 6 dB par cran ; Fine 0 → 6 dB ; Pad −20 dB.
 - [ ] HPF 80 / 120 Hz : le grave est coupé à 12 dB/oct, sans clic en commutant.
-- [ ] Saturation : pousser le Gain jusqu'à la zone rouge : le voyant Clip s'allume dès +19 dBu, la distorsion augmente progressivement, **pas d'explosion de niveau** (plafond +6 dBFS).
+- [ ] Saturation : pousser le Gain jusqu'à la zone rouge : le voyant Clip s'allume dès +19 dBu, propre jusqu'à +21 dBu puis compression douce, **pas d'explosion de niveau** (plafond +6 dBFS).
 - [ ] Phase Ø (L, R, L+R) avec une prise stéréo ou deux micros ; Link Dual / Linked ; R Offset ±6 dB (Dual).
-- [ ] 48V : l'indicateur bascule, **le son ne change pas** (comportement voulu).
+- [ ] Mic vs Inst/DI : le trajet Mic (JT-16 + Twin OPA à fond) est plus ouvert / riche en harmoniques que DI, plus neutre ; plus de commutateur 48V.
 - [ ] V9C3 en Stereo sur le piano : l'image stéréo ne bouge pas ; Dual : canaux indépendants ; M/S.
 
 ## 3. Bus / mastering avec LUFS

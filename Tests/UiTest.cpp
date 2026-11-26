@@ -316,7 +316,7 @@ int main (int argc, char** argv)
         aura::ui::VertigoFaceplate v3 (aura::ModuleType::v9c3, processor.getValueTreeState(), 5), v2 (aura::ModuleType::v9p2, processor.getValueTreeState(), 6);
         v3.setBounds (0, 0, 1000, 385); v2.setBounds (0, 0, 1000, 385);
         bindingCheck (v3, 5, 8, 3, "V9C3");
-        bindingCheck (v2, 6, 5, 5, "V9P2");
+        bindingCheck (v2, 6, 5, 4, "V9P2");
 
         // Auto Focus : en AUTO le potard Thresh n'est plus réglable (le moteur le pilote) ; en MANUAL il l'est de nouveau.
         auto& apvts = processor.getValueTreeState();

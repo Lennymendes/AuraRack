@@ -9,17 +9,23 @@
 //
 //   Étalonnage : 0 dBu = −18 dBFS (+18 dBu = 0 dBFS, EBU R68). Threshold −22 … +23 dBu = −40 … +5 dBFS.
 //
-//   Chaîne : entrée ─► « transformateur » (saturation douce des graves seuls) ─► clé (HP SC) ─► détecteur Peak / RMS
-//            ─► courbe (genou 4 dB, ou Soft) ─► cellule d'enveloppe (Attack / Release / Auto) ─► gain ─► Make-Up
-//            ─► étage VCA / sortie à saturation progressive ─► sortie.
+//   Chaîne : entrée ─► clé (HP SC) ─► détecteur Peak / RMS ─► courbe (genou 4 dB, ou Soft) ─► cellule d'enveloppe
+//            (Attack / Release / Auto) ─► gain (VCA) + Make-Up ─► sortie.
+//   AUCUN étage saturant dans le chemin du signal : à réduction nulle et Make-Up 0, sortie = entrée bit pour bit ; à 1–3 dB,
+//   distorsion < −90 dBc ; pas de coloration permanente, rien dans le bas-médium, aucune atténuation des aigus (pas d'ADAA,
+//   pas de retard).
 //
 //   - STEREO : clé liée (max des deux canaux), un seul gain : l'image ne dérive pas. MONO : clé = somme. DUAL : deux
 //     détecteurs et deux gains indépendants (contrôles communs). M/S : compression séparée du Mid et du Side.
-//   - SOFT (« TipToe ») : le ratio croît avec le niveau, de 1:1 au seuil vers 8:1 : r(o) = 0,875·o² / (o + 12), o = dépassement (dB).
+//   - SOFT (« TipToe ») : le ratio croît avec le niveau, de 1:1 au seuil (pente nulle) vers 8:1, sans coude : réduction
+//     = 0,875·(o − w·atan(o / w)), w = 6 dB, o = dépassement (dB) : pente 0,875·o² / (o² + w²), analytique et C∞.
 //   - Release fixe : constante de temps exacte (cellule sans mémoire). Auto Fast / Auto Slow : double relâchement dépendant
 //     du programme (court après un passage bref, long après une compression soutenue).
-//   - Coloration : la raideur de l'étage de sortie croît avec (réduction de gain + Make-Up) : presque linéaire au repos,
-//     harmoniques 3 et 2 plus présents quand on comprime fort ou qu'on remonte le Make-Up.
+//   - Distorsion du VCA : un terme ADDITIF (jamais dans le chemin principal) en x³ (et x² faible), proportionnel au carré de
+//     la réduction de gain (GR / 20)², appliqué au signal d'entrée de la cellule puis suivi du gain : −93 dBc à 3 dB, ≈ −60 dBc (H3)
+//     et −66 dBc (H2) à 20 dB, pour un signal d'entrée à −6 dBFS (H3 ∝ A²). Il est
+//     calculé sur le signal passé par un passe-bas 4e ordre (min(20 kHz, 0,45·fs/3)) : ses harmoniques tiennent sous Nyquist, aucun repliement
+//     à 44,1 comme à 384 kHz. Le Make-Up n'ajoute pas de coloration (un VCA ne distord pas plus parce qu'on remonte la sortie).
 //   - AUTO FOCUS (FocusTracker.h, comme le W9BMK1) : le seuil est piloté lentement pour viser la réduction moyenne Focus.
 //   - Constantes en secondes (expm1), calcul en double : même réponse de 44,1 à 384 kHz. Latence 0.
 //
@@ -41,7 +47,7 @@ public:
     enum Mode { stereo = 0, mono, dual, midSide };
 
     static constexpr double kDbuToDbfs = -18.0;    // dBFS = dBu − 18
-    static constexpr double kKneeDb = 4.0;
+    static constexpr double kKneeDb = 4.0, kSoftWidthDb = 6.0;
     static constexpr std::array<double, 6> kRatios { 1.0, 2.0, 4.0, 8.0, 10.0, 40.0 };
     static constexpr std::array<double, 10> kAttackMs { 0.1, 0.2, 0.4, 0.7, 1.5, 3.0, 6.0, 12.0, 25.0, 40.0 };
     static constexpr std::array<double, 10> kReleaseMs { 50.0, 80.0, 120.0, 180.0, 260.0, 380.0, 550.0, 800.0, 1000.0, 1200.0 };
@@ -80,7 +86,7 @@ public:
         if (ratioIndex == soft)
         {
             const double o = xDb - thresholdDb;
-            return o > 0.0 ? 0.875 * o * o / (o + 12.0) : 0.0;
+            return o > 0.0 ? 0.875 * (o - kSoftWidthDb * std::atan (o / kSoftWidthDb)) : 0.0;
         }
         return compdetail::kneeReduction (xDb, thresholdDb, kRatios[(std::size_t) std::clamp (ratioIndex, 0, 5)], kKneeDb);
     }
@@ -107,11 +113,12 @@ public:
     {
         thresholdSm.reset (thresholdSm.getTarget());
         makeUpSm.reset (makeUpSm.getTarget());
-        driveSm.reset (kBaseDrive);
+        driveSm.reset (0.0);
+        distActive = false;
         for (auto& c : ch) { c.env = c.power = c.reduction = 0.0; c.cell.reset(); c.tracker.reset (thresholdSm.getCurrent()); }
         keyHp.reset();
-        lowpass.reset();
-        sat.reset();
+        distLp1.reset(); distLp2.reset();
+        dcZ[0] = dcZ[1] = 0.0;
         lastReduction = 0.0;
     }
 
@@ -120,11 +127,8 @@ public:
         const int nCh = (currentMode == dual || currentMode == midSide) ? 2 : 1;
         for (int i = 0; i < n; ++i)
         {
-            // 1. « Transformateur » : saturation douce des graves seuls (x − LP + sat(LP) : transparent hors graves).
-            double xl = L[i], xr = R[i];
-            const double lowL = lowpass.processSample (xl, 0), lowR = lowpass.processSample (xr, 1);
-            xl += std::tanh (kXfmrDrive * lowL) / kXfmrDrive - lowL;
-            xr += std::tanh (kXfmrDrive * lowR) / kXfmrDrive - lowR;
+            // 1. Entrée : aucun traitement (le signal reste intact jusqu'au gain).
+            const double xl = L[i], xr = R[i];
 
             // 2. Clé selon le mode, filtrée HP.
             double s0 = xl, s1 = xr;
@@ -176,11 +180,12 @@ public:
             // 4. Gains (Make-Up compris), application selon le mode.
             const double mu = makeUpSm.next();
             const double g0 = dsp::dbToGain (mu - ch[0].reduction);
-            double yl, yr;
+            double yl, yr, gl = g0, gr = g0;   // gains effectifs par côté (pour la distorsion du VCA)
             if (currentMode == dual)
             {
+                gr = dsp::dbToGain (mu - ch[1].reduction);
                 yl = xl * g0;
-                yr = xr * dsp::dbToGain (mu - ch[1].reduction);
+                yr = xr * gr;
             }
             else if (currentMode == midSide)
             {
@@ -194,12 +199,26 @@ public:
                 yr = xr * g0;
             }
 
-            // 5. Étage VCA / sortie : la raideur suit (réduction + Make-Up).
+            // 5. Distorsion du VCA : terme additif ∝ (GR / 20)², calculé sur le signal passe-bas (alias-free), nul au repos.
             const double red = nCh == 2 ? 0.5 * (ch[0].reduction + ch[1].reduction) : ch[0].reduction;
-            driveSm.setTarget (std::min (kMaxDrive, kBaseDrive + kDriveSlope * (red + mu)));
-            sat.setDrive (driveSm.next());
-            L[i] = sat.process (yl, 0);
-            R[i] = sat.process (yr, 1);
+            const double ratio = std::min (red, 30.0) / 20.0;
+            driveSm.setTarget (red > 1.0e-6 ? ratio * ratio : 0.0);
+            const double q = driveSm.next();
+            if (q > 1.0e-12)
+            {
+                if (! distActive) { distLp1.reset(); distLp2.reset(); dcZ[0] = dcZ[1] = 0.0; distActive = true; }
+                const double c3 = kH3AtRef * q, c2 = kH2AtRef * q;
+                // La non-linéarité est celle de la cellule : elle agit sur le signal d'ENTRÉE de la cellule, puis suit son gain.
+                const double ll = distLp2.processSample (distLp1.processSample (xl, 0), 0), lr = distLp2.processSample (distLp1.processSample (xr, 1), 1);
+                const double d2l = ll * ll, d2r = lr * lr;
+                dcZ[0] += dcCoef * (d2l - dcZ[0]); dcZ[1] += dcCoef * (d2r - dcZ[1]);
+                yl += gl * (-c3 * ll * ll * ll + c2 * (d2l - dcZ[0]));
+                yr += gr * (-c3 * lr * lr * lr + c2 * (d2r - dcZ[1]));
+            }
+            else if (distActive && ! driveSm.isSmoothing())
+                distActive = false;
+            L[i] = yl;
+            R[i] = yr;
             lastReduction = nCh == 2 ? std::max (ch[0].reduction, ch[1].reduction) : ch[0].reduction;
         }
     }
@@ -212,7 +231,8 @@ public:
     bool isAutoFocus() const noexcept { return autoOn; }
 
 private:
-    static constexpr double kBaseDrive = 0.10, kDriveSlope = 0.0125, kMaxDrive = 0.5, kXfmrDrive = 0.6;
+    // Coefficients du VCA à 20 dB de réduction : H3 ≈ c3·A²/4, H2 ≈ c2·A/2 pour un signal d'entrée d'amplitude A.
+    static constexpr double kH3AtRef = 0.016, kH2AtRef = 0.002;
 
     struct Channel
     {
@@ -225,10 +245,12 @@ private:
     {
         thresholdSm.prepare (sampleRate, 20.0);
         makeUpSm.prepare (sampleRate, 20.0);
-        driveSm.prepare (sampleRate, 50.0);
+        driveSm.prepare (sampleRate, 30.0);
         for (auto& c : ch) { c.cell.prepare (sampleRate); c.tracker.prepare (sampleRate); }
-        sat.prepare (sampleRate, kBaseDrive, 0.05);
-        lowpass.setup (dsp::TptSvf::Type::lowPass, 120.0, 0.70710678118654752, 0.0, sampleRate);
+        const double fc = std::min (20000.0, 0.45 * sampleRate / 3.0);   // 3·fc < Nyquist : pas de repliement des harmoniques
+        distLp1.setup (dsp::TptSvf::Type::lowPass, fc, 0.70710678118654752, 0.0, sampleRate);
+        distLp2.setup (dsp::TptSvf::Type::lowPass, fc, 0.70710678118654752, 0.0, sampleRate);
+        dcCoef = compdetail::alpha (1.0 / (2.0 * dsp::kPi * 10.0), sampleRate);   // retire le continu de x² (10 Hz)
         peakAttack = compdetail::alpha (20.0e-6, sampleRate);
         peakRelease = compdetail::alpha (0.008, sampleRate);
         rmsCoef = compdetail::alpha (0.010, sampleRate);
@@ -257,8 +279,8 @@ private:
             else
             {
                 c.cell.fixedBlend = -1.0;   // dépendance au programme
-                if (releaseIndex == 10) c.cell.setTimes (att, 0.040, 0.500);
-                else                    c.cell.setTimes (att, 0.150, 2.500);
+                if (releaseIndex == 10) c.cell.setTimes (att, 0.030, 0.350);   // Auto Fast : vif, rattrape vite après un passage bref
+                else                    c.cell.setTimes (att, 0.120, 1.800);   // Auto Slow : lissé, glue de bus
             }
         }
     }
@@ -292,8 +314,9 @@ private:
 
     std::array<Channel, 2> ch;
     dsp::OnePoleSmoother thresholdSm, makeUpSm, driveSm;
-    compdetail::SatStage sat;
-    dsp::TptSvf keyHp, lowpass;
+    dsp::TptSvf keyHp, distLp1, distLp2;
+    double dcZ[2] { 0.0, 0.0 }, dcCoef = 0.0;
+    bool distActive = false;
 };
 
 } // namespace aura

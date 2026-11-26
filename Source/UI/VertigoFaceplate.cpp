@@ -41,7 +41,7 @@ VertigoFaceplate::VertigoFaceplate (aura::ModuleType t, juce::AudioProcessorValu
     else
     {
         kd = { { P::gain, "Gain" }, { P::fine, "Fine" }, { P::hpf, "HPF" }, { P::phase, "Phase \xc3\x98" }, { P::rOffset, "R Offset" } };
-        sd = { { P::pad, "PAD OFF", "PAD -20", false }, { P::input, "MIC", "INST / DI", false }, { P::phantom, "48V OFF", "48V", true }, { P::link, "DUAL", "LINKED", false } };
+        sd = { { P::pad, "PAD OFF", "PAD -20", false }, { P::input, "MIC", "INST / DI", false }, { P::link, "DUAL", "LINKED", false } };
     }
     for (auto& k : kd)
     {

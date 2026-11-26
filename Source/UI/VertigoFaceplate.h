@@ -4,7 +4,7 @@
 //  V9C3 : bargraphe de réduction (zone fine jusqu'à 6 dB, puis jusqu'à 24 dB), seuil effectif en dBu (Auto Focus),
 //         potards Threshold, Ratio, Attack, Release, Make-Up, SC HPF, Mode, Focus ; interrupteurs Detect, Auto Focus, Bypass.
 //  V9P2 : barre de niveau d'entrée en dBu, voyant Signal (vert) / Clip (rouge dès +19 dBu, plafond +24 dBu) ;
-//         potards Gain, Fine, HPF, Phase, R Offset ; interrupteurs Pad, Input, 48V, Link, Bypass.
+//         potards Gain, Fine, HPF, Phase, R Offset ; interrupteurs Pad, Input, Link, Bypass.
 // Mise en page large uniquement (1000 × 385) : c'est la seule utilisée par l'inspecteur.
 
 #pragma once

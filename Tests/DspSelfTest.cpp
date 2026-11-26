@@ -1964,29 +1964,49 @@ static void testV9c3()
         check (a > 3.0 && b < 0.5, "SC HPF 140 Hz : un 40 Hz à -6 dBFS ne pompe plus (GR Off, HPF)", b, "dB (Off : > 3 dB)");
     }
 
-    // --- Coloration progressive, transparence au repos.
+    // --- Transparence au repos, distorsion VCA progressive et sans repliement.
     {
         const double fs = 96000.0;
-        auto hd3 = [&] (double thrDbu, double makeUp, double inDb)
+        auto run1k = [&] (double thrDbu, double makeUp, double inDb, int ratio, double f = 1000.0, double rate = 96000.0)
         {
-            C c; prep (c, fs, thrDbu, C::r4);
+            C c; prep (c, rate, thrDbu, ratio);
             setParam (c, C::makeUp, makeUp);
             c.reset();
-            Buf x = sine ((std::size_t) (fs * 1.0), 1000.0, fs, std::pow (10.0, inDb / 20.0)), r = x;
-            runModule (c, x, r);
-            return toneDb (x, 3000.0, fs) - toneDb (x, 1000.0, fs);
+            Buf x = sine ((std::size_t) (rate * 1.5), f, rate, std::pow (10.0, inDb / 20.0)), r = x;
+            const Buf in = x;
+            double gr = 0.0; int cnt = 0;
+            for (std::size_t off = 0; off < x.size(); off += 256)
+            {
+                const int n = (int) std::min<std::size_t> (256, x.size() - off);
+                c.process (x.data() + off, r.data() + off, n, {});
+                if (off >= x.size() / 2) { gr += c.getGainReductionDb(); ++cnt; }
+            }
+            struct O { Buf out, in; double gr; } o { x, in, gr / cnt };
+            return o;
         };
-        // Même niveau de sortie (0 dBFS), raideur différente : seule la coloration change.
-        const double rest = hd3 (23.0, 0.0, 0.0), withMakeUp = hd3 (23.0, 24.0, -24.0), withGr = hd3 (-22.0, 24.0, -12.0);
-        check (rest < -50.0, "Au repos (pas de réduction, Make-Up 0, 0 dBFS) : harmonique 3 < -50 dB", rest, "dB");
-        check (withMakeUp > rest + 8.0, "La coloration croît avec le Make-Up (même niveau de sortie)", withMakeUp - rest, "dB de plus");
-        check (withGr > rest + 8.0, "La coloration croît avec la réduction de gain + Make-Up", withGr - rest, "dB de plus");
-        C c; prep (c, 48000.0, 23.0, C::r4);
-        Buf x = sine (48000, 1000.0, 48000.0, 0.5), r = x; const Buf in = x;
-        runModule (c, x, r);
-        const double dAmp = toneDb (x, 1000.0, 48000.0) - toneDb (in, 1000.0, 48000.0);
-        const double h2 = toneDb (x, 2000.0, 48000.0) - toneDb (x, 1000.0, 48000.0), h3 = toneDb (x, 3000.0, 48000.0) - toneDb (x, 1000.0, 48000.0);
-        check (std::abs (dAmp) < 0.05 && h2 < -55.0 && h3 < -65.0, "Sous le seuil, Make-Up 0 (-6 dBFS) : gain à ±0,05 dB, H2 < -55 dB, H3 < -65 dB", dAmp, "dB");
+        {   // Au repos : sortie = entrée, bit pour bit (aucun étage saturant, aucun filtre, aucun retard).
+            const auto o = run1k (23.0, 0.0, -6.0, C::r4);
+            check (o.out == o.in, "Au repos (pas de réduction, Make-Up 0) : sortie = entrée bit pour bit");
+            const auto hf = run1k (23.0, 0.0, -6.0, C::r4, 20000.0);
+            check (hf.out == hf.in, "Aigus à 20 kHz au repos : intacts (aucune perte dans l'air)");
+        }
+        auto h3 = [&] (const auto& o, double f, double rate) { return toneDb (o.out, 3.0 * f, rate) - toneDb (o.out, f, rate); };
+        auto h2 = [&] (const auto& o, double f, double rate) { return toneDb (o.out, 2.0 * f, rate) - toneDb (o.out, f, rate); };
+        const auto g3 = run1k (8.0, 0.0, -6.0, C::r4), g8 = run1k (3.0, 0.0, -6.0, C::r10), g20 = run1k (-5.0, 0.0, -6.0, C::limit);
+        char what[200];
+        std::snprintf (what, sizeof what, "Distorsion progressive : GR %.1f dB -> H3 %.0f dBc ; GR %.1f dB -> %.0f dBc ; GR %.1f dB -> %.0f dBc",
+                       g3.gr, h3 (g3, 1000.0, fs), g8.gr, h3 (g8, 1000.0, fs), g20.gr, h3 (g20, 1000.0, fs));
+        check (g3.gr > 1.5 && g3.gr < 4.5 && h3 (g3, 1000.0, fs) < -85.0 && h3 (g8, 1000.0, fs) > h3 (g3, 1000.0, fs) + 6.0 && h3 (g20, 1000.0, fs) > h3 (g8, 1000.0, fs) + 3.0
+                   && h3 (g20, 1000.0, fs) < -45.0 && h2 (g3, 1000.0, fs) < -90.0, what, h3 (g3, 1000.0, fs), "dBc à 3 dB de GR");
+        const auto mu = run1k (23.0, 24.0, -30.0, C::r4);
+        check (mu.gr < 0.01 && std::abs (toneDb (mu.out, 1000.0, fs) - toneDb (mu.in, 1000.0, fs) - 24.0) < 1.0e-6 && h3 (mu, 1000.0, fs) < -120.0,
+               "Make-Up 24 dB sans réduction : gain exact, aucune coloration ajoutée", h3 (mu, 1000.0, fs), "dBc");
+        {   // Pas de repliement : 18 kHz fortement comprimé à 44,1 kHz (H3 = 54 kHz se replierait à 9,9 kHz).
+            const auto a = run1k (-22.0, 0.0, 0.0, C::limit, 18000.0, 44100.0);
+            const double alias = toneDb (a.out, 9900.0, 44100.0) - toneDb (a.out, 18000.0, 44100.0);
+            const double alias2 = toneDb (a.out, 8100.0, 44100.0) - toneDb (a.out, 18000.0, 44100.0);   // 2·18 − 44,1 = -8,1 -> 8,1 kHz
+            check (alias < -110.0 && alias2 < -110.0, "18 kHz comprimé à 44,1 kHz : repliements < -110 dBc", std::max (alias, alias2), "dBc");
+        }
     }
 
     // --- Auto Focus : réduction moyenne = cible, indépendante du niveau, et aussi en Soft / RMS / M-S.
@@ -2044,7 +2064,7 @@ static void testV9p2()
 {
     std::puts ("\n== 19. V9P2 (préampli double canal)");
     using P = AuraV9P2;
-    check (P::info().params.size() == 9 && P::info().visibleMask (0) == 0x1FFu, "9 paramètres, tous visibles (aucun bouton mort)");
+    check (P::info().params.size() == 8 && P::info().visibleMask (0) == 0xFFu, "8 paramètres, tous visibles, plus de 48V décoratif (aucun bouton mort)");
 
     const double fs = 96000.0;
     auto make = [&] (double fs2 = 96000.0) { auto c = std::make_unique<P>(); c->prepare (fs2, 256); return c; };
@@ -2160,6 +2180,63 @@ static void testV9p2()
         const auto m = run (*mid, 1000.0, -12.0);
         const double thdMid = toneDb (m.L, 3000.0, fs) - toneDb (m.L, 1000.0, fs), thdHot = toneDb (o.L, 3000.0, fs) - toneDb (o.L, 1000.0, fs);
         check (thdHot > thdMid + 10.0, "La distorsion croît avec le niveau (surcharge vs +18 dBu)", thdHot - thdMid, "dB de plus");
+    }
+
+    // --- Bande passante 10 Hz … 35 kHz à ±1 dB (384 kHz), Mic et DI.
+    for (int di = 0; di < 2; ++di)
+    {
+        const double rate = 384000.0;
+        double worst = 0.0;
+        for (double f : { 10.0, 20.0, 100.0, 1000.0, 10000.0, 20000.0, 35000.0 })
+        {
+            auto c = make (rate);
+            setParam (*c, P::input, di); setParam (*c, P::gain, 4); c->reset();
+            const auto o = run (*c, f, -40.0, rate, f < 50.0 ? 2.0 : 0.5);
+            worst = std::max (worst, std::abs (gainDb (o, f, rate)));
+        }
+        check (worst < 1.0, di ? "Inst/DI : 10 Hz … 35 kHz à ±1 dB (384 kHz)" : "Mic (JT-16) : 10 Hz … 35 kHz à ±1 dB (384 kHz)", worst, "dB max");
+    }
+
+    // --- Mic (JT-16 + Twin OPA à pleine charge) ≠ Inst/DI : différence mesurable ; DI plus neutre, HF sans pôle.
+    {
+        auto h = [&] (int di, double gIdx, double ampDb, double* hf = nullptr)
+        {
+            auto c = make (384000.0);
+            setParam (*c, P::input, di); setParam (*c, P::gain, gIdx); c->reset();
+            const auto o = run (*c, 1000.0, ampDb, 384000.0, 0.5);
+            if (hf) { auto c2 = make (384000.0); setParam (*c2, P::input, di); setParam (*c2, P::gain, 4); c2->reset(); *hf = gainDb (run (*c2, 35000.0, -40.0, 384000.0, 0.5), 35000.0, 384000.0); }
+            return std::pair { toneDb (o.L, 3000.0, 384000.0) - toneDb (o.L, 1000.0, 384000.0), toneDb (o.L, 2000.0, 384000.0) - toneDb (o.L, 1000.0, 384000.0) };
+        };
+        double hfMic = 0.0, hfDi = 0.0;
+        const auto mic = h (0, 6.0, -12.0, &hfMic), di = h (1, 6.0, -12.0, &hfDi);
+        char what[200];
+        std::snprintf (what, sizeof what, "Mic vs DI à +18 dBu : H3 %.0f / %.0f dBc, H2 %.0f / %.0f dBc ; 35 kHz : %.2f / %.2f dB", mic.first, di.first, mic.second, di.second, hfMic, hfDi);
+        check (mic.first > di.first + 6.0 && mic.second > di.second + 6.0 && hfMic < hfDi - 0.5 && std::abs (hfDi) < 0.05, what, mic.first - di.first, "dB d'écart H3");
+        const auto lowMic = h (0, 0.0, -30.0), hiMic = h (0, 10.0, -30.0);
+        check (hiMic.first > lowMic.first + 6.0, "Mic : à gain élevé l'étage Twin OPA travaille « à fond » : plus d'harmoniques qu'à gain bas (même niveau de sortie)", std::min (hiMic.first - lowMic.first, 60.0), "dB");
+        check (mic.first < -50.0 && mic.second < -45.0, "Mic à +18 dBu : harmoniques riches mais maîtrisées (H3 < -50, H2 < -45 dBc)", mic.first, "dBc");
+    }
+
+    // --- Sortie propre : linéaire jusqu'à +21 dBu, genou doux jusqu'à +24 dBu ; marge +24 dBu ; pas de repliement.
+    {
+        auto c = make (384000.0);
+        setParam (*c, P::input, 1); setParam (*c, P::gain, 4); c->reset();
+        auto thd = [&] (double dbfs)
+        {
+            auto c2 = make (384000.0);
+            setParam (*c2, P::input, 1); setParam (*c2, P::gain, 4); c2->reset();
+            const auto o = run (*c2, 1000.0, dbfs, 384000.0, 0.3);
+            return toneDb (o.L, 3000.0, 384000.0) - toneDb (o.L, 1000.0, 384000.0);
+        };
+        check (thd (0.0 - 0.1) < -64.0, "Sortie type THAT 1646 : à +17,9 dBu (DI) distorsion H3 < -64 dBc", thd (-0.1), "dBc");
+        check (thd (5.0) > thd (0.0) + 10.0, "Au-delà de +21 dBu la sortie entre en compression douce", thd (5.0) - thd (0.0), "dB de plus");
+        // Repliement à 44,1 kHz : 15 kHz très fort ; H3 = 45 kHz se replierait à 0,9 kHz
+        auto c3 = make (44100.0);
+        setParam (*c3, P::input, 1); setParam (*c3, P::gain, 6); c3->reset();   // +12 dB net : sinus -8 dBFS -> +4 dBFS (+22 dBu, dans le genou)
+        const auto a = run (*c3, 15000.0, -8.0, 44100.0, 1.0);
+        double worstSpur = -200.0; const double ref = toneDb (a.L, 15000.0, 44100.0);
+        for (double f : { 900.0, 3000.0, 5100.0, 14100.0 }) worstSpur = std::max (worstSpur, toneDb (a.L, f, 44100.0) - ref);
+        check (worstSpur < -55.0, "15 kHz à +22 dBu (genou de sortie) à 44,1 kHz : repliements < -55 dBc (ADAA)", worstSpur, "dBc");
     }
 
     // --- 44,1 / 384 kHz : même gain, tenue DXD.
