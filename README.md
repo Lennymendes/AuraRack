@@ -92,7 +92,7 @@ Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack),
 *Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
-## Les 7 modules
+## Les 8 modules
 
 | Module | Algorithme | Paramètres |
 |---|---|---|
@@ -103,6 +103,8 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraLimit** | Lookahead 1,5 ms, détection True Peak 8× (2× en DXD, 32 coefficients par phase ; le 4× de BS.1770 sous-estime de ~0,5 dB les crêtes proches de 20 kHz), minimum glissant, relâchement adaptatif (court sur transitoire isolé, long sur réduction soutenue), moyenne glissante de la longueur de l'anticipation : la rampe d'attaque atteint le gain requis à l'arrivée de la crête (démonstration ci-dessous). | Gain, Ceiling (dBTP), Release, Adaptive |
 | **AuraDelay** | Ping-pong stéréo continu (0 % = deux delays, 100 % = alternance L / R), Lagrange 3e ordre, temps lissé (glissement type bande), Low Cut / High Cut TPT dans la boucle, retard de groupe du High Cut compensé. | Time, Feedback, Ping-Pong, Low Cut, High Cut, R / L |
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
+
+| **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -130,6 +132,22 @@ Les constantes (temps de cellule, courbes) sont des points de départ établis �
 appareils, **calibrés par mesure et non par comparaison avec le matériel** : à affiner à l'écoute. Les 10 paramètres
 de l'AuraComp existent toujours ; chaque algorithme n'utilise que les siens (l'interface n'affiche que ceux-là), ce qui
 évite qu'un changement d'algorithme réinterprète des valeurs.
+
+## W9BMK1 : compresseur CL 1B et sa façade
+
+DSP (`Source/DSP/Modules/AuraW9B.h`), tout en `double`, latence 0, partageant `CompCommon.h` avec l'AuraComp
+(cellule opto à temps réglables, genou 10 dB, étage « lampe »). Chaîne : Input → clé (HP 60 Hz, panneau EL τ 0,5 à 2 ms)
+→ courbe de gain en dB (Threshold, Ratio) → cellule (Attack 0,5 à 300 ms, Release 5 ms à 7,5 s, dépendance au programme
+inhérente à la cellule) → étage lampe → Output. Pas d'entrée Key ni de commutateur Auto-release : volontairement, pour
+n'exposer que des contrôles utiles. L'étage lampe est évalué directement à 352,8 / 384 kHz (ADAA en dessous de 176,4 kHz) :
+aucun affaiblissement des aigus en DXD (20 kHz vs 1 kHz : 0,0001 dB).
+
+**Façade** (`Source/UI/W9bFaceplate.*`, vectorielle, aucune image) : plaque bleue anodisée brossée avec vis et trame de
+points, six potards en aluminium usiné avec anneau de LED ambre, VU rétro-éclairé (réduction de gain, aiguille
+masse-ressort), voyant rouge = crête de sortie (de −6 à 0 dBFS), un seul interrupteur ACTIVE / BYPASS, logo script
+(police script installée, sinon serif italique). Deux mises en page : large (façade de rack) et compacte (carte de slot).
+Chaque contrôle correspond à un paramètre réel (p1..p6 du slot et Bypass du slot) ; rien de décoratif n'est actif.
+Le Mix du slot reste disponible (compression parallèle) ; In / Out / Bypass génériques sont masqués pour éviter les doublons.
 
 ## L'éditeur NextDSP
 
@@ -197,7 +215,8 @@ dans l'état (`order="0,1,…"`).
   Sidechain propre à chaque hôte.
 - **Interface** : rendue et testée sans fenêtre (rendu PNG, glisser-déposer simulé) ; l'aspect et la fluidité dans de vrais
   DAW (macOS, Windows, HiDPI) restent à valider. Pas encore d'affichage de courbes (EQ, courbe de transfert du comp).
-- **Aura-Tube / L-Comp** : l'ADAA ajoute un demi-échantillon de retard et −0,12 dB à 20 kHz (384 kHz) sur ces deux chemins.
+- **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
+- **W9BMK1** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façade non vue dans un vrai DAW.
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
   rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.

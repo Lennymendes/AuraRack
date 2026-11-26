@@ -14,8 +14,9 @@
 namespace aura
 {
 /** Types de module. L'ordre est celui du sélecteur de slot (0 = slot vide) et ne doit jamais changer : il est sauvegardé. */
-enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb };
-inline constexpr int kNumModuleTypes = 8;
+// L'ordre est persisté dans les sessions : on n'ajoute qu'à la fin.
+enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b };
+inline constexpr int kNumModuleTypes = 9;
 
 /** Nombre de paramètres génériques par slot (le module le plus riche en utilise 10). */
 inline constexpr int kMaxModuleParams = 10;
@@ -158,6 +159,10 @@ public:
 
     /** Réduction de gain courante en dB (>= 0), pour les indicateurs. */
     virtual double getGainReductionDb() const noexcept { return 0.0; }
+
+    /** Crête de sortie (linéaire) depuis le dernier appel, puis remise à zéro — voyant de saturation (W9BMK1).
+        Appelée une fois par bloc par le thread audio. */
+    virtual double takeStatusPeak() noexcept { return 0.0; }
 
     double getSampleRate() const noexcept { return sampleRate; }
 

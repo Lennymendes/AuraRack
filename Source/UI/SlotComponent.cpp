@@ -85,6 +85,17 @@ void SlotComponent::typeChanged()
     for (auto* k : { &mixKnob, &inKnob, &outKnob })
         k->setAccent (accent);
 
+    if (shownType == aura::ModuleType::w9b)
+    {
+        if (faceplate == nullptr)
+        {
+            faceplate = std::make_unique<W9bFaceplate> (processor.getValueTreeState(), slot);
+            addAndMakeVisible (*faceplate);
+        }
+    }
+    else
+        faceplate.reset();
+
     shownMask = ~0u;   // force applyVisibility
     applyVisibility();
     repaint();
@@ -106,12 +117,14 @@ void SlotComponent::applyVisibility()
     shownMask = mask;
 
     const bool hasModule = shownType != aura::ModuleType::none;
+    const bool plate = shownType == aura::ModuleType::w9b;   // la façade porte ses propres contrôles (dont l'unique Bypass)
     for (int i = 0; i < aura::kMaxModuleParams; ++i)
-        knobs[(std::size_t) i].setVisible ((mask & (1u << i)) != 0);
-    for (auto* k : { &mixKnob, &inKnob, &outKnob })
-        k->setVisible (hasModule);
-    bypassButton.setVisible (hasModule);
-    scope.setVisible (hasModule && hasGainReduction (shownType));
+        knobs[(std::size_t) i].setVisible (! plate && (mask & (1u << i)) != 0);
+    mixKnob.setVisible (hasModule);                          // Mix = compression parallèle, utile aussi pour le W9BMK1
+    inKnob.setVisible (hasModule && ! plate);                // le W9BMK1 a son propre Input / Output : pas de doublon
+    outKnob.setVisible (hasModule && ! plate);
+    bypassButton.setVisible (hasModule && ! plate);
+    scope.setVisible (hasModule && ! plate && hasGainReduction (shownType));
     resized();
     repaint();
 }
@@ -125,6 +138,14 @@ void SlotComponent::tick (float dt)
 
     const bool nowBypassed = bypassButton.getToggleState();
     if (nowBypassed != bypassed) { bypassed = nowBypassed; repaint(); }
+
+    if (faceplate != nullptr)
+    {
+        const auto& m = processor.getMeters();
+        faceplate->tick (dt, m.gainReductionDb[(std::size_t) slot].load (std::memory_order_relaxed),
+                         m.slotStatus[(std::size_t) slot].exchange (0.0f, std::memory_order_relaxed));
+        return;
+    }
 
     if (! scope.isVisible()) return;
 
@@ -173,6 +194,13 @@ void SlotComponent::resized()
         if (! k.isVisible()) continue;
         k.setBounds (knobArea.getX() + (n % cols) * cellW, knobArea.getY() + (n / cols) * cellH, cellW, cellH);
         ++n;
+    }
+
+    if (faceplate != nullptr)
+    {
+        faceplate->setBounds (knobArea);
+        mixKnob.setBounds (footerArea.withSizeKeepingCentre (footerArea.getWidth() / 3, footerArea.getHeight()));
+        return;
     }
 
     const int fw = footerArea.getWidth() / 3;

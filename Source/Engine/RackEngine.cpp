@@ -514,6 +514,12 @@ void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int 
     }
 
     gr.store (cur != nullptr ? (float) cur->getGainReductionDb() : 0.0f, std::memory_order_relaxed);
+    if (cur != nullptr)
+    {
+        auto& status = meters.slotStatus[(std::size_t) slotIndex];
+        const auto peak = (float) cur->takeStatusPeak();
+        if (peak > status.load (std::memory_order_relaxed)) status.store (peak, std::memory_order_relaxed);   // un seul écrivain
+    }
 }
 
 } // namespace aura

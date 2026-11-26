@@ -62,7 +62,7 @@ int main (int argc, char** argv)
 
     using aura::ModuleType;
     const ModuleType layout[] = { ModuleType::eq, ModuleType::comp, ModuleType::comp, ModuleType::comp, ModuleType::duck,
-                                  ModuleType::clip, ModuleType::limit, ModuleType::delay, ModuleType::verb, ModuleType::none };
+                                  ModuleType::clip, ModuleType::limit, ModuleType::delay, ModuleType::verb, ModuleType::w9b };
     for (int s = 0; s < 10; ++s)
         processor.setSlotModule (s, layout[s]);
     // Slot 2 : Aura-Tube ; slot 3 : L-Comp (choix d'algorithme = paramètre 1, normalisé 0 / 0,5 / 1).
@@ -71,6 +71,13 @@ int main (int argc, char** argv)
     setNormalised (aura::params::generic (1, aura::AuraComp::peakReduction), 0.75f);
     setNormalised (aura::params::generic (2, aura::AuraComp::threshold), 0.65f);
     setParam (aura::params::mix (7), 30.0f);
+    using W = aura::AuraW9B;
+    setNormalised (aura::params::generic (9, W::input), 0.55f);
+    setNormalised (aura::params::generic (9, W::threshold), 0.55f);
+    setNormalised (aura::params::generic (9, W::ratio), 0.60f);
+    setNormalised (aura::params::generic (9, W::attack), 0.45f);
+    setNormalised (aura::params::generic (9, W::release), 0.55f);
+    setNormalised (aura::params::generic (9, W::output), 0.62f);
     renderAudio (processor, fs, 200);
 
     AuraRackEditor editor (processor);
@@ -137,6 +144,16 @@ int main (int argc, char** argv)
         juce::FileOutputStream out (dir.getChildFile ("auraRack-editor.png"));
         out.setPosition (0); out.truncate();
         png.writeImageToStream (image, out);
+        // Façade W9BMK1 seule, mise en page large (façade de rack).
+        {
+            aura::ui::W9bFaceplate plate (processor.getValueTreeState(), 9);
+            plate.setBounds (0, 0, aura::ui::W9bFaceplate::kWideWidth, aura::ui::W9bFaceplate::kWideHeight);
+            for (int i = 0; i < 90; ++i) plate.tick (1.0f / 60.0f, 7.5f, 0.85f);
+            auto wideImage = plate.createComponentSnapshot (plate.getLocalBounds(), true, 1.0f);
+            juce::FileOutputStream wideOut (dir.getChildFile ("w9bmk1-wide.png"));
+            wideOut.setPosition (0); wideOut.truncate();
+            png.writeImageToStream (wideImage, wideOut);
+        }
         std::printf ("  rendu : %s (%d x %d)\n", dir.getChildFile ("auraRack-editor.png").getFullPathName().toRawUTF8(), image.getWidth(), image.getHeight());
     }
 

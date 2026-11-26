@@ -78,7 +78,8 @@ if(AURA_BUILD_PLUGIN)
         Source/UI/NextLookAndFeel.cpp
         Source/UI/SlotComponent.cpp
         Source/UI/RackView.cpp
-        Source/UI/TopBar.cpp)
+        Source/UI/TopBar.cpp
+        Source/UI/W9bFaceplate.cpp)
 
     target_compile_definitions(AuraRack PUBLIC
         JUCE_WEB_BROWSER=0
@@ -128,7 +129,8 @@ if(AURA_BUILD_PLUGIN AND AURA_BUILD_TESTS)
         Source/UI/NextLookAndFeel.cpp
         Source/UI/SlotComponent.cpp
         Source/UI/RackView.cpp
-        Source/UI/TopBar.cpp)
+        Source/UI/TopBar.cpp
+        Source/UI/W9bFaceplate.cpp)
     target_compile_definitions(aurarack_ui_test PRIVATE
         JucePlugin_Name="AuraRack"
         JUCE_WEB_BROWSER=0

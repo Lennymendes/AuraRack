@@ -229,7 +229,8 @@ static void testEq()
 }
 
 /** Fait tourner un compresseur échantillon par échantillon et renvoie la réduction (dB) relevée aux instants demandés. */
-static std::vector<double> reductionAt (AuraComp& c, double fs, const std::vector<double>& times, double tailSec,
+template <typename Comp>
+static std::vector<double> reductionAt (Comp& c, double fs, const std::vector<double>& times, double tailSec,
                                         const std::function<double (double)>& program)
 {
     std::vector<double> out;
@@ -996,6 +997,125 @@ static void testMoveSlot()
     check (valid.load() && RackRouting::isValid (e.getOrder()), "4 fils en rafale : l'ordre reste une permutation valide");
 }
 
+static void testW9b()
+{
+    std::puts ("\n== 12. W9BMK1 (compresseur opto à lampes, esprit CL 1B)");
+    using W = AuraW9B;
+
+    check (W::info().params.size() == 6, "6 paramètres : Input, Threshold, Ratio, Attack, Release, Output");
+    check (W::info().visibleMask (0) == 0x3Fu, "Tous les paramètres sont visibles (aucun bouton mort)");
+
+    // --- Réduction statique : Input pousse la clé ; theorie = courbe à genou 10 dB.
+    {
+        const double fs = 96000.0;
+        W c;
+        c.prepare (fs, 256);
+        setParam (c, W::input, 6.0);
+        setParam (c, W::threshold, -18.0);
+        setParam (c, W::ratio, 4.0);
+        setParam (c, W::attack, 10.0);
+        setParam (c, W::release, 50.0);
+        setParam (c, W::output, 0.0);
+        c.reset();
+        auto L = sine ((std::size_t) (fs * 3.0), 1000.0, fs, 0.25), R = L;     // -12 dBFS + 6 dB d'Input = -6 dB à la clé
+        runModule (c, L, R);
+        const double expected = c.gainReductionFor (dsp::gainToDb (0.5));
+        double meanGr = 0.0;
+        for (int i = 0; i < 960; ++i)
+        {
+            double l = 0.25 * std::sin (dsp::kTwoPi * 1000.0 * (double) (L.size() + (std::size_t) i) / fs), r = l;
+            c.process (&l, &r, 1, {});
+            meanGr += c.getGainReductionDb() / 960.0;
+        }
+        check (std::abs (meanGr - expected) < 0.08, "Réduction statique = théorie (Input +6 dB, seuil -18, 4:1)", meanGr - expected, "dB d'écart");
+    }
+
+    // --- Transparence au repos : seuil 0 dB, ratio 1:1, gains à 0 -> seule la couleur de l'étage lampe, sans continu.
+    {
+        const double fs = 384000.0;
+        double gain1k = 0.0, gain20k = 0.0, mean = 0.0;
+        for (double f : { 1000.0, 20000.0 })
+        {
+            W c;
+            c.prepare (fs, 256);
+            setParam (c, W::threshold, 0.0);
+            setParam (c, W::ratio, 1.0);
+            c.reset();
+            const std::size_t n = 65536, warm = (std::size_t) fs;
+            const std::size_t k = (std::size_t) std::lround (f * (double) n / fs);
+            const double fe = (double) k * fs / (double) n;
+            auto L = sine (warm + n, fe, fs, 0.1), R = L;
+            runModule (c, L, R);
+            const double g = dsp::gainToDb (toneAmplitude (L, warm, n, fe, fs) / 0.1);
+            (f < 5000.0 ? gain1k : gain20k) = g;
+            if (f < 5000.0) { for (std::size_t i = warm; i < warm + n; ++i) mean += L[i] / (double) n; }
+        }
+        check (std::abs (gain20k - gain1k) < 0.01, "DXD : l'étage lampe n'affaiblit pas les aigus (20 kHz vs 1 kHz)", gain20k - gain1k, "dB");
+        check (std::abs (mean) < 1e-5, "Aucun continu en sortie", mean);
+    }
+
+    // --- Invariance en fréquence d'échantillonnage (échelon d'amplitude).
+    {
+        const std::vector<double> times { 0.003, 0.01, 0.03, 0.1, 0.3, 1.0 };
+        std::vector<std::vector<double>> res;
+        const double rates[] = { 44100.0, 96000.0, 352800.0, 384000.0 };
+        for (double fs : rates)
+        {
+            W c;
+            c.prepare (fs, 256);
+            setParam (c, W::input, 6.0);
+            setParam (c, W::threshold, -24.0);
+            setParam (c, W::ratio, 6.0);
+            setParam (c, W::attack, 5.0);
+            setParam (c, W::release, 300.0);
+            c.reset();
+            std::vector<double> t2; for (double t : times) t2.push_back (0.2 + t);
+            res.push_back (reductionAt (c, fs, t2, 0.01, [] (double t) { return (t < 0.2 ? 0.02 : 0.5) * std::sin (dsp::kTwoPi * 1000.0 * t); }));
+        }
+        double worst = 0.0;
+        for (std::size_t r = 0; r < 3; ++r)
+            for (std::size_t k = 0; k < times.size(); ++k)
+                worst = std::max (worst, std::abs (res[r][k] - res[3][k]));
+        check (worst < 0.2, "Invariance en fréquence d'échantillonnage (44,1 / 96 / 352,8 vs 384 kHz)", worst, "dB max");
+    }
+
+    // --- Contenu non harmonique (repliement / modulation) à 384 kHz et 44,1 kHz, sinus comprimé.
+    for (double fs : { 384000.0, 44100.0 })
+    {
+        W c;
+        c.prepare (fs, 256);
+        setParam (c, W::input, 6.0);
+        setParam (c, W::threshold, -24.0);
+        setParam (c, W::ratio, 8.0);
+        c.reset();
+        const std::size_t n = 65536, warm = (std::size_t) (fs * 1.5);
+        const std::size_t k0 = (std::size_t) std::lround ((fs > 100000.0 ? 18000.0 : 5000.0) * (double) n / fs);
+        const double f0 = (double) k0 * fs / (double) n;
+        auto L = sine (warm + n, f0, fs, 0.5), R = L;
+        runModule (c, L, R);
+        const double r = aliasRatioDb (L, warm, n, k0);
+        check (r < (fs > 100000.0 ? -90.0 : -50.0), std::string ("Contenu non harmonique à ") + std::to_string ((int) (fs / 1000.0)) + " kHz", r, "dB");
+    }
+
+    // --- Voyant : s'allume quand la sortie approche 0 dBFS, reste éteint sinon ; se remet à zéro à la lecture.
+    {
+        const double fs = 96000.0;
+        W c;
+        c.prepare (fs, 256);
+        setParam (c, W::threshold, 0.0);
+        setParam (c, W::ratio, 1.0);
+        c.reset();
+        auto L = sine (4800, 1000.0, fs, 0.1), R = L;
+        runModule (c, L, R);
+        check (c.takeStatusPeak() < 0.2 && c.takeStatusPeak() == 0.0, "Voyant : crête faible, puis remise à zéro à la lecture");
+        setParam (c, W::output, 24.0);
+        c.reset();
+        auto L2 = sine (4800, 1000.0, fs, 0.5), R2 = L2;
+        runModule (c, L2, R2);
+        check (c.takeStatusPeak() > 1.0, "Voyant : sortie au-delà de 0 dBFS (Output +24 dB)");
+    }
+}
+
 //==============================================================================
 int main (int argc, char** argv)
 {
@@ -1003,7 +1123,7 @@ int main (int argc, char** argv)
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)
