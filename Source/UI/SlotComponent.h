@@ -34,6 +34,9 @@ public:
     void setPosition (int position);
     void setLifted (bool lifted);
 
+    /** Mode « zone haute » : grande carte, sans poignée de glissement (le réordonnancement se fait dans la bande). */
+    void setInspectorMode (bool on) { inspector = on; resized(); repaint(); }
+
     /** Synchronise la vue sur le moteur (thread de messages, une fois par image). */
     void tick (float dtSeconds);
 
@@ -55,7 +58,7 @@ private:
     SlotDragHost& dragHost;
 
     int position = 0;
-    bool lifted = false, dragging = false, bypassed = false, updatingCombo = false;
+    bool inspector = false, lifted = false, dragging = false, bypassed = false, updatingCombo = false;
     aura::ModuleType shownType = (aura::ModuleType) -1;
     std::uint32_t shownMask = 0;
 

@@ -29,6 +29,21 @@ const PlateTheme& silverPanelTheme()
     return t;
 }
 
+const PlateTheme& graphiteRoseTheme()
+{
+    static const PlateTheme t = [] {
+        PlateTheme p { juce::Colour (0xff2b2d34), juce::Colour (0xff22242a), juce::Colour (0xff181a1f), juce::Colour (0xffe7d9e1), juce::Colour (0xff3a3d47) };
+        p.led = juce::Colour (0xffff7ab8);
+        p.ledDim = juce::Colour (0xff3d2231);
+        p.trackFill = juce::Colour (0xff0e0f13);
+        p.darkCap = true;
+        p.alert = juce::Colour (0xffff6a4d);
+        p.grain = 0.5f;
+        return p;
+    }();
+    return t;
+}
+
 //==============================================================================
 PlateKnob::PlateKnob (const PlateTheme& t) : theme (t)
 {

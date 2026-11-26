@@ -9,6 +9,7 @@
 #include "../PluginProcessor.h"
 #include "NextLookAndFeel.h"
 
+#include <complex>
 #include <optional>
 
 namespace aura::ui
@@ -29,6 +30,7 @@ struct PlateTheme
 
 const PlateTheme& blueAnodisedTheme();   // W9BMK1
 const PlateTheme& silverPanelTheme();    // L9A
+const PlateTheme& graphiteRoseTheme();   // E9DS
 
 /** Police réduite pour que `text` tienne dans `maxWidth` (inchangée si elle tient déjà). */
 inline juce::Font fitFont (juce::Font f, const juce::String& text, float maxWidth)

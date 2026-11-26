@@ -7,6 +7,7 @@
 #include "Modules/AuraComp.h"
 #include "Modules/AuraDelay.h"
 #include "Modules/AuraDuck.h"
+#include "Modules/AuraE9DS.h"
 #include "Modules/AuraEQ.h"
 #include "Modules/AuraL9A.h"
 #include "Modules/AuraLimit.h"
@@ -36,6 +37,7 @@ inline const ModuleInfo& moduleInfo (ModuleType t) noexcept
         case ModuleType::verb:  return AuraVerb::info();
         case ModuleType::w9b:   return AuraW9B::info();
         case ModuleType::l9a:   return AuraL9A::info();
+        case ModuleType::e9ds:  return AuraE9DS::info();
         case ModuleType::none:  break;
     }
     return emptySlotInfo();
@@ -54,6 +56,7 @@ inline std::unique_ptr<AuraModuleDSP> createModule (ModuleType t)
         case ModuleType::verb:  return std::make_unique<AuraVerb>();
         case ModuleType::w9b:   return std::make_unique<AuraW9B>();
         case ModuleType::l9a:   return std::make_unique<AuraL9A>();
+        case ModuleType::e9ds:  return std::make_unique<AuraE9DS>();
         case ModuleType::none:  break;
     }
     return nullptr;

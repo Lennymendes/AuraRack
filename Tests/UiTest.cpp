@@ -3,6 +3,7 @@
 // puis rendu de l'interface en PNG (argument facultatif : dossier de sortie).
 
 #include "../Source/PluginEditor.h"
+#include "../Source/UI/E9dsFaceplate.h"
 #include "../Source/UI/L9aFaceplate.h"
 #include "../Source/UI/W9bFaceplate.h"
 
@@ -65,7 +66,7 @@ int main (int argc, char** argv)
 
     using aura::ModuleType;
     const ModuleType layout[] = { ModuleType::eq, ModuleType::comp, ModuleType::comp, ModuleType::comp, ModuleType::duck,
-                                  ModuleType::clip, ModuleType::limit, ModuleType::delay, ModuleType::l9a, ModuleType::w9b };
+                                  ModuleType::e9ds, ModuleType::limit, ModuleType::delay, ModuleType::l9a, ModuleType::w9b };
     for (int s = 0; s < 10; ++s)
         processor.setSlotModule (s, layout[s]);
     // Slot 2 : Aura-Tube ; slot 3 : L-Comp (choix d'algorithme = paramètre 1, normalisé 0 / 0,5 / 1).
@@ -93,36 +94,32 @@ int main (int argc, char** argv)
     editor.setBounds (0, 0, AuraRackEditor::kDesignWidth, AuraRackEditor::kDesignHeight);
     for (int i = 0; i < 20; ++i) { renderAudio (processor, fs, 20); editor.tickForTesting (1.0f / 60.0f); }
 
-    // --- Glisser-déposer : le slot 0 (position 0) est déposé sur la cellule de la position 3.
-    auto* rack = dynamic_cast<aura::ui::RackView*> (editor.getChildComponent (0)->getChildComponent (1));
-    check (rack != nullptr, "RackView trouvé dans l'éditeur");
-    if (rack == nullptr) return 1;
+    // --- Glisser-déposer dans la bande : le slot 0 (position 0) est déposé sur la position 3.
+    auto& content = editor.getContent();
+    auto& strip = content.strip;
+    auto tileCentre = [&] (int s) { return strip.getTileBounds (s).getCentre(); };
 
-    auto& slot0 = rack->getSlotComponent (0);
-    const auto origin = juce::Point<float> (40.0f, 14.0f);   // dans l'en-tête, hors liste déroulante et bouton
-    slot0.mouseDown (mouseEvent (slot0, origin, origin, false));
-    const auto cell3Centre = rack->getSlotComponent (3).getBounds().getCentre().toFloat();
-    const auto delta = cell3Centre - slot0.getBounds().getCentre().toFloat();
-    const auto rackStart = slot0.getPosition().toFloat() + origin;   // souris, en coordonnées du rack
+    const auto start = tileCentre (0), end = tileCentre (3);
+    strip.mouseDown (mouseEvent (strip, start, start, false));
     for (int step = 1; step <= 10; ++step)
     {
-        const auto mouseInRack = rackStart + delta * ((float) step / 10.0f);
-        slot0.mouseDrag (mouseEvent (slot0, mouseInRack - slot0.getPosition().toFloat(), origin, true));   // position locale au slot, comme JUCE
+        strip.mouseDrag (mouseEvent (strip, start + (end - start) * ((float) step / 10.0f), start, true));
         editor.tickForTesting (1.0f / 60.0f);
     }
     check (processor.getSlotOrder() == aura::RackRouting::identity(), "Pendant le glissement : l'ordre du moteur n'est pas modifié");
-    slot0.mouseUp (mouseEvent (slot0, rackStart + delta - slot0.getPosition().toFloat(), origin, true));
+    strip.mouseUp (mouseEvent (strip, end, start, true));
 
     const auto expected = aura::RackRouting::moved (aura::RackRouting::identity(), 0, 3);
     check (processor.getSlotOrder() == expected, "Au relâchement : moveSlot(0 -> 3) appliqué au moteur");
-    check (rack->getDisplayedPosition (0) == 3 && rack->getDisplayedPosition (1) == 0, "La vue affiche le nouvel ordre");
+    check (strip.getDisplayedPosition (0) == 3 && strip.getDisplayedPosition (1) == 0, "La bande affiche le nouvel ordre");
     for (int i = 0; i < 90; ++i) editor.tickForTesting (1.0f / 60.0f);
-    check (rack->getSlotComponent (0).getBounds().getCentre().toFloat().getDistanceFrom (cell3Centre) < 2.0f, "Animation terminée : le slot 0 occupe la cellule 3");
+    check (tileCentre (0).getDistanceFrom (end) < 2.0f, "Animation terminée : la tuile du slot 0 occupe la position 3");
+    check (content.inspector.getSelected() == 0, "Réordonner ne change pas le module affiché en haut (sélection = identité du slot)");
 
-    // --- Ordre modifié ailleurs (restauration d'état, annulation) : la vue se resynchronise sans verrou.
+    // --- Ordre modifié ailleurs (restauration d'état, annulation) : la bande se resynchronise sans verrou.
     processor.setSlotOrder ({ 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 });
     for (int i = 0; i < 120; ++i) editor.tickForTesting (1.0f / 60.0f);
-    check (rack->getDisplayedPosition (9) == 0 && rack->getDisplayedPosition (0) == 9, "Ordre changé hors interface : la vue suit");
+    check (strip.getDisplayedPosition (9) == 0 && strip.getDisplayedPosition (0) == 9, "Ordre changé hors interface : la bande suit");
 
     // --- Rafale de déplacements depuis le thread de messages, interface qui tourne : la vue suit toujours l'ordre du moteur.
     {
@@ -137,12 +134,58 @@ int main (int argc, char** argv)
         for (int i = 0; i < 120; ++i) editor.tickForTesting (1.0f / 60.0f);
         const auto order = processor.getSlotOrder();
         for (int pos = 0; pos < 10; ++pos)
-            followed = followed && rack->getDisplayedPosition (order[(std::size_t) pos]) == pos;
+            followed = followed && strip.getDisplayedPosition (order[(std::size_t) pos]) == pos;
         check (aura::RackRouting::isValid (order) && followed, "200 déplacements enchaînés : permutation valide, vue synchronisée");
     }
 
-    // --- Rendu PNG.
     processor.setSlotOrder (aura::RackRouting::identity());
+    for (int i = 0; i < 120; ++i) editor.tickForTesting (1.0f / 60.0f);
+
+    // --- Sélection, bypass, retrait, ajout rapide.
+    {
+        auto click = [&] (juce::Point<float> p) { strip.mouseDown (mouseEvent (strip, p, p, false)); strip.mouseUp (mouseEvent (strip, p, p, false)); };
+        click (tileCentre (5));
+        check (content.inspector.getSelected() == 5 && processor.getUiSettings().selectedSlot == 5, "Clic sur une tuile : le module s'affiche en grand et la sélection est mémorisée");
+        check (content.inspector.getCard (5).isVisible() && ! content.inspector.getCard (4).isVisible(), "Zone haute : une seule carte visible");
+
+        auto* bypass = processor.getValueTreeState().getParameter (aura::params::bypass (6));
+        check (bypass->getValue() < 0.5f, "Slot 7 actif au départ");
+        click (strip.getBypassRect (6).getCentre());
+        check (bypass->getValue() > 0.5f, "Pastille LED : bypass du module");
+        click (strip.getBypassRect (6).getCentre());
+        check (bypass->getValue() < 0.5f, "Pastille LED : réactivation");
+
+        click (strip.getRemoveRect (4).getCentre());
+        check (processor.getSlotModule (4) == ModuleType::none, "Croix : le module est retiré (slot vide)");
+        strip.showAddMenuForTesting (4, (int) ModuleType::e9ds);
+        for (int i = 0; i < 5; ++i) editor.tickForTesting (1.0f / 60.0f);
+        check (processor.getSlotModule (4) == ModuleType::e9ds && content.inspector.getSelected() == 4, "Ajout rapide : E9DS inséré et affiché en grand");
+        check (processor.getValueTreeState().getParameter (aura::params::generic (4, aura::AuraE9DS::threshold))->getValue()
+                   == (float) aura::AuraE9DS::info().params[0].defaultNormalised(), "E9DS ajouté : paramètres aux valeurs par défaut du module");
+    }
+
+    // --- Réglages ⚙️ : langue, aide, LUFS ; persistance dans l'état de la session.
+    {
+        auto u = processor.getUiSettings();
+        u.language = 1; u.info = true; u.loudness = true;
+        processor.setUiSettings (u);
+        for (int i = 0; i < 5; ++i) { renderAudio (processor, fs, 4); editor.tickForTesting (1.0f / 60.0f); }
+        check (aura::ui::i18n::getLanguageIndex() == 1 && aura::ui::i18n::tr (aura::ui::i18n::Key::chain) == "CHAIN", "Langue : English appliquée à l'interface");
+        check (content.loudness.isVisible() && processor.isLoudnessEnabled(), "LUFS activé : module visible et mesure active côté moteur");
+
+        juce::MemoryBlock state;
+        processor.getStateInformation (state);
+        AuraRackProcessor restored;
+        restored.setProcessingPrecision (juce::AudioProcessor::doublePrecision);
+        restored.setPlayConfigDetails (4, 2, fs, 512);
+        restored.prepareToPlay (fs, 512);
+        restored.setStateInformation (state.getData(), (int) state.getSize());
+        check (restored.getUiSettings() == processor.getUiSettings(), "Session restaurée : langue, aide, LUFS et sélection identiques");
+        check (restored.getUiSettings().loudness && restored.isLoudnessEnabled(), "Session restaurée : la mesure LUFS est réactivée");
+        check (restored.getSlotModule (4) == ModuleType::e9ds, "Session restaurée : le module E9DS est restauré");
+    }
+
+    // --- Rendu PNG.
     for (int i = 0; i < 120; ++i) { renderAudio (processor, fs, 8); editor.tickForTesting (1.0f / 60.0f); }
     if (argc > 1)
     {
@@ -180,6 +223,32 @@ int main (int argc, char** argv)
             for (int i = 0; i < 120; ++i) wide.tick (1.0f / 60.0f, { 6.0f, 0.0f, -20.0f });
             snapshot (wide, 1000, 385, "l9a-wide-out.png");
             setNormalised (aura::params::generic (8, LL::meter), 0.0f);
+        }
+        // Disposition complète : E9DS actif + LUFS en anglais, puis W9BMK1 en français sans LUFS.
+        auto fullSnapshot = [&] (const char* file)
+        {
+            for (int i = 0; i < 30; ++i) { renderAudio (processor, fs, 6); editor.tickForTesting (1.0f / 60.0f); }
+            auto img = editor.createComponentSnapshot (editor.getLocalBounds(), true, 1.0f);
+            juce::FileOutputStream o (dir.getChildFile (file));
+            o.setPosition (0); o.truncate();
+            png.writeImageToStream (img, o);
+        };
+        fullSnapshot ("auraRack-e9ds-lufs-en.png");
+        {
+            aura::ui::E9dsFaceplate wide (processor.getValueTreeState(), 4), compact (processor.getValueTreeState(), 4);
+            wide.setBounds (0, 0, 1000, 385); compact.setBounds (0, 0, 240, 262);
+            for (int i = 0; i < 120; ++i) { wide.tick (1.0f / 60.0f, { 6.0f, 0.0f, -22.0f }); compact.tick (1.0f / 60.0f, { 6.0f, 0.0f, -22.0f }); }
+            snapshot (wide, 1000, 385, "e9ds-wide.png");
+            snapshot (compact, 240, 262, "e9ds-compact.png");
+        }
+        {
+            auto u = processor.getUiSettings();
+            u.language = 0; u.loudness = false; u.selectedSlot = 9;
+            processor.setUiSettings (u);
+            fullSnapshot ("auraRack-w9b-fr.png");
+            u.selectedSlot = 1;   // module générique : grands potentiomètres homogènes
+            processor.setUiSettings (u);
+            fullSnapshot ("auraRack-comp-generic.png");
         }
         std::printf ("  rendu : %s (%d x %d)\n", dir.getChildFile ("auraRack-editor.png").getFullPathName().toRawUTF8(), image.getWidth(), image.getHeight());
     }
@@ -227,6 +296,9 @@ int main (int argc, char** argv)
         w9.setBounds (0, 0, 1000, 385); l9.setBounds (0, 0, 1000, 385);
         bindingCheck (w9, 9, 7, 2, "W9BMK1");
         bindingCheck (l9, 8, 2, 3, "L9A");
+        aura::ui::E9dsFaceplate e9 (processor.getValueTreeState(), 4);
+        e9.setBounds (0, 0, 1000, 385);
+        bindingCheck (e9, 4, 5, 3, "E9DS");
 
         // Auto Focus : en AUTO le potard Thresh n'est plus réglable (le moteur le pilote) ; en MANUAL il l'est de nouveau.
         auto& apvts = processor.getValueTreeState();

@@ -58,6 +58,23 @@ public:
     /** Déplace un slot de la position `from` à la position `to` (indices dans l'ordre actuel). */
     void moveSlot (int fromPosition, int toPosition);
 
+    //==== Réglages d'interface (sauvegardés avec la session, jamais automatisables) =====
+    struct UiSettings
+    {
+        int language = 0;           // index de langue (voir UI/I18n.h)
+        bool info = false;          // aide contextuelle + indicateurs techniques
+        bool loudness = false;      // mesure LUFS (mode mastering)
+        int selectedSlot = 0;       // module affiché dans la zone haute
+        bool operator== (const UiSettings&) const = default;
+    };
+    UiSettings getUiSettings() const;
+    void setUiSettings (const UiSettings&);
+
+    /** Sonie : activée par les réglages, mesurée en sortie du rack (voir DSP/LoudnessMeter.h). */
+    const aura::LoudnessMeter::Readout& getLoudness() const noexcept { return engine.getLoudness(); }
+    void resetLoudness() noexcept { engine.requestLoudnessReset(); }
+    bool isLoudnessEnabled() const noexcept { return engine.isLoudnessEnabled(); }
+
     const aura::RackEngine::Meters& getMeters() const noexcept { return engine.getMeters(); }
     float getCpuLoad() const noexcept { return cpuLoad.load (std::memory_order_relaxed); }
     double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }

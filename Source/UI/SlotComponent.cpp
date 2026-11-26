@@ -1,6 +1,7 @@
 // AuraRack — NextDSP · un slot du rack (carte).
 
 #include "SlotComponent.h"
+#include "I18n.h"
 
 namespace aura::ui
 {
@@ -159,7 +160,7 @@ void SlotComponent::resized()
 {
     auto r = getLocalBounds().reduced (10, 0);
     auto header = r.removeFromTop (kHeaderHeight).withTrimmedTop (5).withTrimmedBottom (3);
-    header.removeFromLeft (34);   // poignée + numéro de position
+    header.removeFromLeft (inspector ? 0 : 34);   // poignée + numéro de position
     bypassButton.setBounds (header.removeFromRight (40));
     header.removeFromRight (6);
     typeBox.setBounds (header);
@@ -167,40 +168,44 @@ void SlotComponent::resized()
     r.removeFromTop (4);
     if (scope.isVisible())
     {
-        scopeArea = r.removeFromTop (40);
+        scopeArea = r.removeFromTop (inspector ? 70 : 40);
         scope.setBounds (scopeArea);
         r.removeFromTop (4);
     }
 
-    footerArea = r.removeFromBottom (58).withTrimmedBottom (4);
+    footerArea = r.removeFromBottom (inspector ? 84 : 58).withTrimmedBottom (4);
     knobArea = r;
 
     // Potentiomètres du module : seuls les visibles, 3 par ligne.
-    constexpr int cols = 3;
     int visible = 0;
     for (auto& k : knobs) visible += k.isVisible() ? 1 : 0;
+    const int cols = inspector ? std::max (1, visible <= 6 ? visible : (visible + 1) / 2) : 3;
     const int rows = std::max (1, (visible + cols - 1) / cols);
-    const int cellW = knobArea.getWidth() / cols, cellH = juce::jlimit (60, 76, knobArea.getHeight() / rows);
+    const int cellW = inspector ? 150 : knobArea.getWidth() / cols;
+    const int cellH = inspector ? std::min (150, knobArea.getHeight() / rows) : juce::jlimit (60, 76, knobArea.getHeight() / rows);
+    const int x0 = inspector ? knobArea.getX() + (knobArea.getWidth() - cols * cellW) / 2 : knobArea.getX();
+    const int y0 = inspector ? knobArea.getY() + std::max (0, (knobArea.getHeight() - rows * cellH) / 2) : knobArea.getY();
     int n = 0;
     for (int i = 0; i < aura::kMaxModuleParams; ++i)
     {
         auto& k = knobs[(std::size_t) i];
         if (! k.isVisible()) continue;
-        k.setBounds (knobArea.getX() + (n % cols) * cellW, knobArea.getY() + (n / cols) * cellH, cellW, cellH);
+        k.setBounds (x0 + (n % cols) * cellW, y0 + (n / cols) * cellH, cellW, cellH);
         ++n;
     }
 
     if (faceplate != nullptr)
     {
         faceplate->setBounds (knobArea);
-        mixKnob.setBounds (footerArea.withSizeKeepingCentre (footerArea.getWidth() / 3, footerArea.getHeight()));
+        mixKnob.setBounds (footerArea.withSizeKeepingCentre (inspector ? 150 : footerArea.getWidth() / 3, footerArea.getHeight()));
         return;
     }
 
-    const int fw = footerArea.getWidth() / 3;
-    mixKnob.setBounds (footerArea.getX(), footerArea.getY(), fw, footerArea.getHeight());
-    inKnob.setBounds  (footerArea.getX() + fw, footerArea.getY(), fw, footerArea.getHeight());
-    outKnob.setBounds (footerArea.getX() + 2 * fw, footerArea.getY(), fw, footerArea.getHeight());
+    const int fw = inspector ? 150 : footerArea.getWidth() / 3;
+    const int fx = inspector ? footerArea.getX() + (footerArea.getWidth() - 3 * fw) / 2 : footerArea.getX();
+    mixKnob.setBounds (fx, footerArea.getY(), fw, footerArea.getHeight());
+    inKnob.setBounds  (fx + fw, footerArea.getY(), fw, footerArea.getHeight());
+    outKnob.setBounds (fx + 2 * fw, footerArea.getY(), fw, footerArea.getHeight());
 }
 
 void SlotComponent::paint (juce::Graphics& g)
@@ -227,17 +232,19 @@ void SlotComponent::paint (juce::Graphics& g)
 
     // Poignée de glissement et numéro de position.
     g.setColour (textDim);
-    for (int row = 0; row < 3; ++row)
-        for (int col = 0; col < 2; ++col)
-            g.fillEllipse (13.0f + (float) col * 4.5f, 12.0f + (float) row * 4.5f, 2.2f, 2.2f);
+    if (! inspector)
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 2; ++col)
+                g.fillEllipse (13.0f + (float) col * 4.5f, 12.0f + (float) row * 4.5f, 2.2f, 2.2f);
 
     if (shownType == aura::ModuleType::none)
     {
         g.setColour (textDim);
         g.setFont (NextLookAndFeel::font (12.5f));
-        g.drawFittedText ("Slot vide\nChoisir un module", getLocalBounds().withTrimmedTop (kHeaderHeight).reduced (20), juce::Justification::centred, 2);
+        g.drawFittedText (i18n::tr (i18n::Key::emptySlot) + "\n" + i18n::tr (i18n::Key::chooseModule), getLocalBounds().withTrimmedTop (kHeaderHeight).reduced (20), juce::Justification::centred, 2);
     }
 
+    if (inspector) return;
     g.setColour (textDim);
     g.setFont (NextLookAndFeel::font (10.5f, true));
     g.drawText (juce::String (position + 1).paddedLeft ('0', 2), 26, 6, 18, kHeaderHeight - 10, juce::Justification::centredLeft);
@@ -254,12 +261,12 @@ void SlotComponent::paintOverChildren (juce::Graphics& g)
 
 juce::MouseCursor SlotComponent::getMouseCursor()
 {
-    return dragging ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor;
+    return dragging && ! inspector ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor;
 }
 
 void SlotComponent::mouseDown (const juce::MouseEvent& e)
 {
-    if (! headerArea().contains (e.getPosition())) return;   // seul l'en-tête sert de poignée
+    if (inspector || ! headerArea().contains (e.getPosition())) return;   // seul l'en-tête sert de poignée (hors zone haute)
     dragging = true;
     dragHost.slotDragBegan (*this, e);
 }

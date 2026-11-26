@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "../DSP/LoudnessMeter.h"
 #include "../DSP/ModuleRegistry.h"
 
 #include <atomic>
@@ -194,6 +195,13 @@ public:
     };
     const Meters& getMeters() const noexcept { return meters; }
 
+    //==== Sonie (LUFS) : mesure en sortie du rack, désactivée par défaut (coût nul) ==
+    void setLoudnessEnabled (bool on) noexcept { loudnessEnabled.store (on, std::memory_order_relaxed); }
+    bool isLoudnessEnabled() const noexcept { return loudnessEnabled.load (std::memory_order_relaxed); }
+    void setLoudnessMono (bool mono) noexcept { loudnessMono.store (mono, std::memory_order_relaxed); }
+    void requestLoudnessReset() noexcept { loudnessResetRequested.store (true, std::memory_order_release); }
+    const LoudnessMeter::Readout& getLoudness() const noexcept { return loudness.getReadout(); }
+
     double getSampleRate() const noexcept { return sampleRate; }
 
 private:
@@ -281,6 +289,8 @@ private:
     std::atomic<bool> prepared { false };
 
     Meters meters;
+    LoudnessMeter loudness;
+    std::atomic<bool> loudnessEnabled { false }, loudnessMono { false }, loudnessResetRequested { false };
 };
 
 } // namespace aura

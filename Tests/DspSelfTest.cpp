@@ -1529,8 +1529,8 @@ static void testL9a()
 static void testRackModules()
 {
     std::puts ("\n== 15. W9BMK1 et L9A dans le rack (types persistés, indicateurs publiés par le moteur)");
-    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && kNumModuleTypes == 10,
-           "Identifiants de type figés (w9b = 8, l9a = 9) : les sessions existantes restent valables");
+    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && (int) ModuleType::e9ds == 10 && kNumModuleTypes == 11,
+           "Identifiants de type figés (w9b = 8, l9a = 9, e9ds = 10) : les sessions existantes restent valables");
 
     const double fs = 96000.0;
     RackEngine e;
@@ -1567,13 +1567,231 @@ static void testRackModules()
 }
 
 //==============================================================================
+
+//==============================================================================
+/** Amplitude de la composante à f dans x[start, start+n) (corrélation sur un nombre entier de périodes ou plus). */
+static double amplitudeAt (const Buf& x, std::size_t start, std::size_t n, double f, double fs)
+{
+    double c = 0.0, s = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const double ph = dsp::kTwoPi * f * (double) (start + i) / fs;
+        c += x[start + i] * std::cos (ph);
+        s += x[start + i] * std::sin (ph);
+    }
+    return 2.0 * std::sqrt (c * c + s * s) / (double) n;
+}
+
+static void testE9ds()
+{
+    std::puts ("\n== 16. E9DS (de-esser DXD)");
+    using E = AuraE9DS;
+    check (E::info().params.size() == 7 && E::info().visibleMask (0) == 0x7Fu, "7 paramètres, tous visibles (aucun bouton mort)");
+
+    auto settled = [] (double fs, double f, double amp, int modeParam, double* gr)
+    {
+        E c;
+        c.prepare (fs, 256);
+        setParam (c, E::mode, (double) modeParam);
+        c.reset();
+        Buf x = sine ((std::size_t) (fs * 1.0), f, fs, amp), r = x;
+        runModule (c, x, r);
+        if (gr != nullptr) *gr = c.getGainReductionDb();
+        return x;
+    };
+
+    // --- Courbe statique : sinus à la fréquence centrale, GR mesurée = courbe théorique, jamais au-delà de Range.
+    for (double fs : { 48000.0, 384000.0 })
+    {
+        E ref; ref.prepare (fs, 256);
+        double gr = 0.0;
+        settled (fs, 6500.0, 0.25, 0, &gr);   // -12 dBFS, seuil -30 dB
+        const double theory = ref.staticReductionFor (-12.0);
+        check (std::abs (gr - theory) < 0.25, fs > 100000.0 ? "Réduction statique = théorie (384 kHz)" : "Réduction statique = théorie (48 kHz)", gr - theory, "dB d'écart");
+    }
+    {
+        double gr = 0.0;
+        settled (96000.0, 6500.0, 1.0, 0, &gr);   // 0 dBFS : saturation à Range (8 dB)
+        check (gr <= 8.0 + 1.0e-6 && gr > 7.0, "Range : la réduction ne dépasse jamais 8 dB (0 dBFS en bande)", gr, "dB");
+    }
+    {
+        double a = 0.0, b = 0.0;
+        settled (44100.0, 6500.0, 0.25, 0, &a);
+        settled (384000.0, 6500.0, 0.25, 0, &b);
+        check (std::abs (a - b) < 0.2, "Même réduction à 44,1 kHz et 384 kHz", std::abs (a - b), "dB");
+    }
+
+    // --- Sous le seuil ou hors bande : transparent. Split n'atteint pas le reste du spectre.
+    {
+        const double fs = 96000.0;
+        E c; c.prepare (fs, 256);
+        PortableGauss g (7, 0.003);   // bruit à ≈ -50 dBFS : sous le seuil
+        Buf x (96000), r;
+        for (auto& v : x) v = g();
+        Buf y = x; r = x;
+        runModule (c, y, r);
+        double maxDiff = 0.0;
+        for (std::size_t i = 0; i < x.size(); ++i) maxDiff = std::max (maxDiff, std::abs (y[i] - x[i]));
+        check (maxDiff == 0.0, "Sous le seuil : sortie identique à l'entrée (bit-transparent)", maxDiff);
+
+        // 6,5 kHz (-12 dB) + 1 kHz (-12 dB) : Split réduit la sibilance, laisse le 1 kHz, Wide réduit tout.
+        Buf mixIn (96000);
+        for (std::size_t i = 0; i < mixIn.size(); ++i)
+            mixIn[i] = 0.25 * std::sin (dsp::kTwoPi * 6500.0 * (double) i / fs) + 0.25 * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs);
+        for (int modeParam = 0; modeParam < 2; ++modeParam)
+        {
+            E d; d.prepare (fs, 256);
+            setParam (d, E::mode, (double) modeParam);
+            d.reset();
+            Buf yy = mixIn, rr = mixIn;
+            runModule (d, yy, rr);
+            const double sib = 20.0 * std::log10 (amplitudeAt (yy, 48000, 48000, 6500.0, fs) / 0.25);
+            const double low = 20.0 * std::log10 (amplitudeAt (yy, 48000, 48000, 1000.0, fs) / 0.25);
+            if (modeParam == 0)
+            {
+                check (sib < -3.0, "Split : la sibilance (6,5 kHz) est réduite", sib, "dB");
+                check (std::abs (low) < 1.0, "Split : le médium (1 kHz) reste intact (pas de zozotement)", low, "dB");
+            }
+            else
+                check (low < -2.0, "Wide : tout le signal est réduit (1 kHz inclus)", low, "dB");
+        }
+    }
+
+    // --- Dynamique : attaque rapide, relâchement au réglage, pas de pompage sur un sinus continu.
+    {
+        const double fs = 96000.0;
+        E c; c.prepare (fs, 256);
+        setParam (c, E::release, 60.0);
+        c.reset();
+        const std::size_t nBurst = (std::size_t) (0.3 * fs), nTail = (std::size_t) (0.6 * fs);
+        Buf x (nBurst + nTail);
+        for (std::size_t i = 0; i < x.size(); ++i)
+            x[i] = (i < nBurst ? 0.5 : 0.0005) * std::sin (dsp::kTwoPi * 6500.0 * (double) i / fs);
+        Buf r = x;
+        double peak = 0.0, at5ms = 0.0, tailAt = -1.0;
+        for (std::size_t i = 0; i < x.size(); ++i)
+        {
+            c.process (&x[i], &r[i], 1, {});
+            const double gr = c.getGainReductionDb();
+            if (i < nBurst) peak = std::max (peak, gr);
+            if (i == (std::size_t) (0.005 * fs)) at5ms = gr;
+            if (i >= nBurst && tailAt < 0.0 && gr < 0.1 * peak) tailAt = (double) (i - nBurst) / fs;
+        }
+        check (at5ms > 0.85 * peak, "Attaque : 85 % de la réduction en 5 ms", at5ms / peak);
+        check (tailAt > 0.04 && tailAt < 0.30, "Relâchement (60 ms) : retour sous 10 % de la réduction en 40 à 300 ms", tailAt, "s");
+    }
+
+    // --- Listen : sortie = bande de détection.
+    {
+        const double fs = 96000.0;
+        E c; c.prepare (fs, 256);
+        setParam (c, E::listen, 1.0);
+        c.reset();
+        Buf x (96000), r;
+        for (std::size_t i = 0; i < x.size(); ++i)
+            x[i] = 0.25 * std::sin (dsp::kTwoPi * 6500.0 * (double) i / fs) + 0.25 * std::sin (dsp::kTwoPi * 300.0 * (double) i / fs);
+        r = x;
+        runModule (c, x, r);
+        const double sib = amplitudeAt (x, 48000, 48000, 6500.0, fs) / 0.25;
+        const double low = amplitudeAt (x, 48000, 48000, 300.0, fs) / 0.25;
+        check (std::abs (sib - 1.0) < 0.02 && low < 0.1, "Listen : seule la bande sibilante passe (6,5 kHz ≈ 0 dB, 300 Hz < -20 dB)", low);
+    }
+
+    // --- Robustesse : silence, signal plein, sans NaN.
+    {
+        E c; c.prepare (384000.0, 256);
+        Buf x (384000), r;
+        PortableGauss g (3, 0.5);
+        for (auto& v : x) v = g();
+        r = x;
+        runModule (c, x, r);
+        bool finite = true;
+        for (double v : x) finite = finite && std::isfinite (v);
+        check (finite, "Bruit fort à 384 kHz : sortie finie");
+    }
+}
+
+static void testLoudness()
+{
+    std::puts ("\n== 17. Mesure de sonie BS.1770-4 / EBU R128");
+    auto feed = [] (LoudnessMeter& m, double fs, double f, double ampDb, double seconds, bool mono)
+    {
+        const std::size_t n = (std::size_t) (seconds * fs);
+        Buf x = sine (n, f, fs, std::pow (10.0, ampDb / 20.0)), y = x;
+        for (std::size_t off = 0; off < n; off += 512)
+            m.process (x.data() + off, y.data() + off, (int) std::min<std::size_t> (512, n - off), mono);
+    };
+
+    for (double fs : { 44100.0, 48000.0, 96000.0, 384000.0 })
+    {
+        LoudnessMeter m; m.prepare (fs);
+        feed (m, fs, 997.0, -23.0, 20.0, false);
+        const auto& r = m.getReadout();
+        char label[96];
+        std::snprintf (label, sizeof label, "Sinus 997 Hz -23 dBFS stéréo = -23,0 LUFS (%.1f kHz) : intégrée", fs / 1000.0);
+        check (std::abs (r.integrated.load() + 23.0) < 0.1, label, r.integrated.load(), "LUFS");
+        check (std::abs (r.shortTerm.load() + 23.0) < 0.1 && std::abs (r.momentary.load() + 23.0) < 0.1, "  court terme et momentanée = -23,0 LUFS", r.shortTerm.load(), "LUFS");
+    }
+    {
+        LoudnessMeter m; m.prepare (48000.0);
+        feed (m, 48000.0, 997.0, -23.0, 10.0, true);
+        check (std::abs (m.getReadout().integrated.load() + 26.01) < 0.1, "Mono : un canal compte une fois (-23 dBFS -> -26,0 LUFS)", m.getReadout().integrated.load(), "LUFS");
+    }
+    {   // Portes : silence et passage très faible ignorés, passage à -31 LUFS pris en compte.
+        LoudnessMeter m; m.prepare (48000.0);
+        feed (m, 48000.0, 997.0, -23.0, 10.0, false);
+        feed (m, 48000.0, 997.0, -60.0, 10.0, false);   // < -33 : porte relative
+        check (std::abs (m.getReadout().integrated.load() + 23.0) < 0.1, "Porte relative : un passage à -60 LUFS n'abaisse pas la mesure", m.getReadout().integrated.load(), "LUFS");
+
+        LoudnessMeter k; k.prepare (48000.0);
+        feed (k, 48000.0, 997.0, -23.0, 10.0, false);
+        feed (k, 48000.0, 997.0, -31.0, 10.0, false);   // > -33 : compté
+        const double expected = -0.691 + 10.0 * std::log10 (0.5 * (std::pow (10.0, (-23.0 + 0.691) / 10.0) + std::pow (10.0, (-31.0 + 0.691) / 10.0)));
+        check (std::abs (k.getReadout().integrated.load() - expected) < 0.2, "Porte relative : un passage à -31 LUFS est compté", k.getReadout().integrated.load() - expected, "LU d'écart");
+
+        LoudnessMeter z; z.prepare (48000.0);
+        feed (z, 48000.0, 997.0, -100.0, 5.0, false);
+        check (z.getReadout().integrated.load() <= -119.0, "Porte absolue : silence -> pas de valeur intégrée", z.getReadout().integrated.load());
+    }
+    {   // EBU Tech 3342 : 20 s à -20 LUFS puis 20 s à -30 LUFS -> LRA ≈ 10 LU.
+        LoudnessMeter m; m.prepare (48000.0);
+        feed (m, 48000.0, 997.0, -20.0, 20.0, false);
+        feed (m, 48000.0, 997.0, -30.0, 20.0, false);
+        check (std::abs (m.getReadout().range.load() - 10.0) < 1.0, "Loudness Range : -20 puis -30 LUFS = 10 LU (±1)", m.getReadout().range.load(), "LU");
+    }
+    {
+        LoudnessMeter m; m.prepare (96000.0);
+        feed (m, 96000.0, 1000.0, -6.0, 1.0, false);
+        check (std::abs (m.getReadout().peakDb.load() + 6.02) < 0.05, "Crête échantillon = -6,02 dBFS", m.getReadout().peakDb.load(), "dBFS");
+        m.reset();
+        check (m.getReadout().peakDb.load() <= -119.0 && m.getReadout().integrated.load() <= -119.0, "reset() remet tout à zéro");
+    }
+    {   // Dans le moteur : désactivée par défaut (rien de publié), activée -> même valeur.
+        const double fs = 96000.0;
+        RackEngine e;
+        TestParams p;
+        p.bind (e);
+        e.prepare (fs, 512);
+        auto L = sine ((std::size_t) (fs * 6.0), 997.0, fs, std::pow (10.0, -23.0 / 20.0)), R = L;
+        runEngine (e, L, R, 0, L.size() / 2, 512);
+        check (e.getLoudness().integrated.load() <= -119.0, "Moteur : mesure désactivée -> rien n'est publié");
+        e.setLoudnessEnabled (true);
+        runEngine (e, L, R, L.size() / 2, L.size(), 512);
+        check (std::abs (e.getLoudness().momentary.load() + 23.0) < 0.2, "Moteur : mesure activée -> momentanée = -23 LUFS", e.getLoudness().momentary.load(), "LUFS");
+        e.requestLoudnessReset();
+        auto L2 = sine (4096, 997.0, fs, 0.01), R2 = L2;
+        runEngine (e, L2, R2, 0, L2.size(), 512);
+        check (e.getLoudness().integrated.load() <= -119.0, "Moteur : requestLoudnessReset() efface l'historique");
+    }
+}
+
 int main (int argc, char** argv)
 {
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)

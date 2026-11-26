@@ -1,6 +1,7 @@
 // AuraRack — NextDSP · barre globale.
 
 #include "TopBar.h"
+#include "I18n.h"
 
 namespace aura::ui
 {
@@ -53,28 +54,42 @@ TopBar::TopBar (AuraRackProcessor& p)
     sidechainBox.addItemList (sc->choices, 1);
     sidechainAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (*sc, sidechainBox, nullptr);
     addAndMakeVisible (sidechainBox);
+
+    gearButton.onClick = [this]
+    {
+        juce::CallOutBox::launchAsynchronously (std::make_unique<SettingsPanel> (processor), gearButton.getScreenBounds(), nullptr);
+    };
+    addAndMakeVisible (gearButton);
+}
+
+void TopBar::setInfoMode (bool on)
+{
+    gearButton.setTooltip (on ? i18n::tr (i18n::Key::helpSettings) : juce::String());
+    sidechainBox.setTooltip (on ? juce::String (juce::CharPointer_UTF8 ("Sidechain : bus externe VST3 / AU ou entr\xc3\xa9" "e du rack")) : juce::String());
 }
 
 void TopBar::resized()
 {
     auto r = getLocalBounds().reduced (16, 10);
-    r.removeFromLeft (150);   // titre
-    inputKnob.setBounds  (r.removeFromLeft (118));
-    outputKnob.setBounds (r.removeFromLeft (118));
-    mixKnob.setBounds    (r.removeFromLeft (140));
+    gearButton.setBounds (r.removeFromRight (40).withSizeKeepingCentre (38, 38));
+    r.removeFromRight (8);
+    r.removeFromLeft (140);   // titre
+    inputKnob.setBounds  (r.removeFromLeft (112));
+    outputKnob.setBounds (r.removeFromLeft (112));
+    mixKnob.setBounds    (r.removeFromLeft (132));
     r.removeFromLeft (14);
 
-    sidechainArea = r.removeFromLeft (210);
+    sidechainArea = r.removeFromLeft (190);
     sidechainBox.setBounds (sidechainArea.withTrimmedLeft (66).withSizeKeepingCentre (sidechainArea.getWidth() - 66, 26));
-    r.removeFromLeft (18);
+    r.removeFromLeft (16);
 
     // Niveaux : deux barres Input, deux barres Output.
-    auto meters = r.removeFromLeft (230).toFloat();
+    auto meters = r.removeFromLeft (200).toFloat();
     inBars  = meters.removeFromTop (meters.getHeight() * 0.5f).reduced (0.0f, 3.0f);
     outBars = meters.reduced (0.0f, 3.0f);
     r.removeFromLeft (14);
 
-    infoArea = r.removeFromLeft (170);
+    infoArea = r.removeFromLeft (160);
     cpuBar = r.toFloat().withSizeKeepingCentre (r.getWidth() - 4.0f, 6.0f).withTrimmedLeft (30.0f);
 }
 
@@ -121,7 +136,7 @@ void TopBar::paint (juce::Graphics& g)
     // Sidechain : étiquette + voyant (vert = bus relié par l'hôte).
     g.setColour (textDim);
     g.setFont (NextLookAndFeel::font (10.0f, true));
-    g.drawText ("SIDECHAIN", sidechainArea.getX(), sidechainArea.getY(), 62, sidechainArea.getHeight(), juce::Justification::centredLeft);
+    g.drawText (i18n::tr (i18n::Key::sidechain), sidechainArea.getX(), sidechainArea.getY(), 62, sidechainArea.getHeight(), juce::Justification::centredLeft);
     g.setColour (shownSidechain ? levelOk : stroke);
     g.fillEllipse ((float) sidechainArea.getX() + 52.0f, (float) sidechainArea.getCentreY() - 3.0f, 6.0f, 6.0f);
 
@@ -147,7 +162,7 @@ void TopBar::paint (juce::Graphics& g)
     g.setColour (textDim);
     g.setFont (NextLookAndFeel::font (10.5f));
     const double ms = shownRate > 0.0 ? 1000.0 * (double) std::max (shownLatency, 0) / shownRate : 0.0;
-    g.drawText (juce::String (juce::CharPointer_UTF8 ("64-bit  \xc2\xb7  latence ")) + juce::String (ms, 2) + " ms", infoArea, juce::Justification::topLeft);
+    g.drawText (juce::String (juce::CharPointer_UTF8 ("64-bit  \xc2\xb7  ")) + i18n::tr (i18n::Key::latency) + " " + juce::String (ms, 2) + " ms", infoArea, juce::Justification::topLeft);
 
     // CPU.
     g.setColour (textDim);

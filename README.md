@@ -1,15 +1,15 @@
 # AuraRack 0.3 — NextDSP · rack multi-effets DXD (VST3 / AU)
 
-Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **9 modules** DSP natifs,
+Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **10 modules** DSP natifs,
 traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marque **NextDSP**, suite **AuraSuite**
 (Aura, AuraEngine, AuraDrum, AuraPitch, AuraRack).
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
-**AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, rack en grille
-de 10 cartes, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
-**Auto Focus**) et **L9A** (LA-2A).
+**État** : Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**) en plus des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
+**AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, zone haute « module actif » + bande de chaîne
+de 10 tuiles, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
+**Auto Focus**) et **L9A** (LA-2A) ; **E9DS** (de-esser) complète la liste.
 
 ## Compiler
 
@@ -31,16 +31,17 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 |---|---|
 | `Source/DSP/AuraDspCore.h` | SVF TPT, lisseurs, rampes, ligne de retard (Lagrange 3e ordre, reset O(1)), sur-échantillonneur polyphase, minimum glissant |
 | `Source/DSP/AuraModuleDSP.h` | Classe de base `AuraModuleDSP`, description des paramètres (`ParamSpec`, `ModuleInfo`), bus de clé |
-| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B` |
+| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS` |
+| `Source/DSP/LoudnessMeter.h` | Mesure de sonie BS.1770-4 / EBU R128 (momentané, court terme, intégré, LRA, crête), sans JUCE, sans allocation |
 | `Source/DSP/ModuleRegistry.h` | Métadonnées par type, fabrique |
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (154 paramètres), textes qui suivent le module du slot |
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
-| `Source/UI/` | `NextLookAndFeel` (vectoriel), `RackView` (grille + glisser-déposer), `SlotComponent`, `TopBar`, `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate` |
+| `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate` |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (136 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (167 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (11 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (25 vérifications) |
 
 ## Architecture audio
 
@@ -93,7 +94,7 @@ Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack),
 *Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
-## Les 9 modules
+## Les 10 modules
 
 | Module | Algorithme | Paramètres |
 |---|---|---|
@@ -106,6 +107,7 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
 | **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée et **Auto Focus** : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output, Auto Focus, Focus |
 | **L9A** | Amplificateur de nivellement opto (esprit LA-2A) avec façade dédiée : voir la section « L9A ». | Peak Reduction, Gain, Mode, Meter |
+| **E9DS** | De-esser à bande sibilante dynamique avec façade dédiée : voir la section « E9DS ». | Threshold, Frequency, Width, Range, Release, Mode, Listen |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -208,6 +210,39 @@ Façade (`Source/UI/L9aFaceplate.*`) : panneau argent brossé, VU au centre (éc
 PEAK REDUCTION à droite, trois interrupteurs : COMP / LIMIT, METER GR / OUT, ACTIVE / BYPASS. Constantes calibrées par
 mesure, pas par comparaison avec le matériel.
 
+## E9DS : de-esser DXD
+
+> **Origine.** Le cahier des charges décrit le E9DS comme « inspiré du E9DS du lecteur AURA ». Aucune spécification ni
+> aucun code de ce module ne figure dans ce dépôt ni dans les documents du projet : **E9DS est une conception AuraRack à
+> part entière, pas un portage.** Si l'algorithme du lecteur doit être repris à l'identique (ou servir de référence de
+> mesure), il suffit de fournir sa source ou sa description : les paramètres et la façade sont déjà prêts à l'accueillir.
+
+Objectif : maîtriser la sibilance et la dureté haut-médium (voix, mais aussi résonances de piano, cymbales, bus) **sans
+zozotement et sans pompage**, en préservant l'air et le timbre.
+
+Chaîne (`Source/DSP/Modules/AuraE9DS.h`) : entrée → bande sibilante (passe-bande TPT, Frequency 2–14 kHz, Width Q 0,5–4, liée
+en stéréo) → enveloppe crête (attaque 0,1 ms, relâchement 4 ms) → courbe statique (6:1, genou 6 dB, saturation douce à Range)
+→ lissage dans le domaine dB (attaque 0,25 ms, Release 10–300 ms) → gain.
+
+- **Split** (défaut) : seule la bande est atténuée, `y = x − (1 − g)·bande`. Le passe-bande est de phase nulle à f0 : c'est une
+  cloche dynamique, le corps et l'air hors bande restent intacts — c'est ce qui évite le zozotement d'un de-esser large.
+- **Wide** : gain sur tout le signal (pour un bus agressif sur tout le haut du spectre).
+- **Listen** : la sortie est la bande de détection, pour caler Frequency / Width à l'oreille.
+- **Range** : réduction maximale (0–18 dB), jamais dépassée (saturation douce) : pas de trou dans le signal.
+- Constantes en secondes, calcul en double, latence 0 : même réponse à 44,1 et 384 kHz. Mix et Bypass : ceux du slot.
+- Façade (`E9dsFaceplate`) : affichage de la **réponse vivante** de la cloche dynamique (ce que le module fait réellement au
+  spectre) avec courbe fantôme à pleine réduction, barre de niveau de la bande face au seuil, valeur de GR ; 5 potards, MODE,
+  LISTEN, ACTIVE / BYPASS (un contrôle = un paramètre, vérifié par le test UI).
+
+**Avec W9BMK1 et L9A.** Ordre usuel sur une voix : `E9DS → L9A (nivellement) → W9BMK1 (couleur / contrôle)` — le de-esser
+d'abord, pour que le compresseur ne « pousse » pas les sibilantes ; ou `L9A → E9DS` si l'on veut dessiber le signal déjà
+nivelé (une compression opto remonte les « s »). Tous trois exposent leur réduction de gain à la bande de chaîne, et se
+réordonnent par glisser-déposer sans coupure.
+
+Mesures (banc DSP) : réduction statique = théorie à 0,04 dB près (48 et 384 kHz) ; Range jamais dépassé (7,97 dB pour 8) ;
+44,1 vs 384 kHz : 0,002 dB d'écart ; sous le seuil : sortie bit-identique ; Split réduit 6,5 kHz de 7,6 dB et laisse 1 kHz à
+−0,04 dB ; attaque : 85 % de la réduction en 5 ms ; relâchement (60 ms) sous 10 % en 146 ms.
+
 ## Ajouter un module au rack
 
 1. **DSP** : une classe `AuraXxx : AuraModuleDSP` avec `info()` (`ParamSpec`), `setParameter`, `process`, `reset`, et au besoin
@@ -232,12 +267,33 @@ mesure, pas par comparaison avec le matériel.
   La vue lit l'ordre en **un mot atomique de 64 bits** et le compare à celui qu'elle affiche (resynchronisation animée si
   l'ordre change ailleurs : restauration d'état, annulation). Pendant le glissement rien n'est écrit ; au relâchement un
   seul `moveSlot`, par **compare-and-swap** côté moteur. Le thread audio n'est jamais bloqué.
+- **Disposition type T-RackS** (`PluginEditor`, `InspectorView`, `ChainStrip`) :
+  - **zone haute « module actif »** : le module sélectionné en grand — façade pour W9BMK1 / L9A / E9DS, grands potentiomètres
+    homogènes pour les autres (AuraEQ, AuraComp, AuraDuck, AuraClip, AuraLimit, AuraDelay, AuraVerb) ;
+  - **bande basse « chaîne »** : 10 tuiles dans l'ordre du signal. Clic = sélection ; **glisser = réordonner en temps réel**
+    (aperçu animé, un seul `moveSlot` au relâchement) ; pastille LED = bypass ; croix = retirer ; tuile vide « + » (ou clic droit)
+    = menu d'ajout rapide. Réduction de gain par tuile ; en mode Infos, valeur en dB.
+  - **État d'interface** : `AuraRackProcessor::UiSettings` (langue, aide, LUFS, module sélectionné), enregistré dans l'état de
+    la session (propriétés `uiLanguage`, `uiInfo`, `uiLoudness`, `uiSlot` ; état version 3, les sessions antérieures s'ouvrent
+    avec les valeurs par défaut). Ce ne sont **pas** des paramètres automatisables. L'éditeur relit ces réglages à chaque
+    image : restauration d'état et panneau ⚙️ se propagent seuls. La **sélection suit l'identité du slot**, pas sa position :
+    réordonner ne change pas le module affiché en haut.
+- **Menu ⚙️** (`SettingsPanel`, bulle ouverte depuis la barre) : **Langue** (Français / English), **Infos / aide contextuelle**
+  (info-bulles sur les tuiles et la barre, descriptions de module, valeur de GR sur les tuiles), **Mesure LUFS (mastering)** +
+  remise à zéro. Les noms de paramètres audio (Threshold, Ratio…) restent en anglais, comme sur le matériel.
+- **i18n** (`UI/I18n.h`) : un dictionnaire (une ligne par clé, une colonne par langue). Ajouter une langue = une entrée dans
+  `Lang`, son nom dans `kLanguageNames`, une colonne dans `kTable` (une ligne incomplète ne compile pas).
+- **Module LUFS** (`LoudnessBar` + `DSP/LoudnessMeter.h`) : momentané (400 ms), court terme (3 s), intégré (portes −70 LUFS
+  puis −10 LU), LRA (portes −70 / −20 LU, percentiles 10–95 %), crête **échantillon** (pas un true-peak). Pondération K
+  généralisée à toute fréquence d'échantillonnage. Mesuré **en sortie du rack**, désactivé par défaut : aucun calcul audio
+  ni place prise. Un canal source mono compte une fois. Vérifié : sinus 997 Hz −23 dBFS stéréo = −23,0 LUFS à 48 kHz
+  (−23,00), 44,1 / 96 / 384 kHz à ±0,03 LU ; LRA −20 puis −30 LUFS = 10,0 LU ; portes relatives ; mono ; moteur.
 - Sélecteur de module par slot (`setSlotModule`), Bypass, Mix, trims In / Out, indicateur DXD, latence, voyant Sidechain,
   CPU.
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 136 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
+`aurarack_dsp_test` (sans JUCE, 167 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 25) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -287,6 +343,9 @@ dans l'état (`order="0,1,…"`).
 - **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
+- **E9DS** : conception propre à AuraRack (la spécification du E9DS du lecteur AURA n'est pas disponible) ; détection sur la bande seule (pas de détection relative au niveau large-bande), pas d'anticipation (latence 0, attaque 0,25 ms) : un « t » ou « ch » très bref peut passer avant la réduction. Constantes validées par mesure sur signaux synthétiques, **pas à l'écoute sur de vraies voix** : à valider.
+- **LUFS** : crête échantillon seulement (pas de true-peak) ; l'intégrée est lue par histogramme à pas de 0,1 LU (écart ≤ 0,03 LU mesuré) ; la mesure suit la sortie du rack, avant le traitement de l'hôte.
+- **Interface T-RackS** : vérifiée par rendu PNG et événements souris simulés ; les menus contextuels (ajout / retrait) et la bulle ⚙️ s'ouvrent via JUCE et n'ont pas été exercés dans un vrai DAW ; les cartes génériques (AuraEQ…) sont lisibles mais sans courbes.
 - **Auto Focus** : lent par construction (≈ 10 s pour se caler après un changement de programme) ; le Threshold manuel est ignoré pendant l'Auto ; testé sur une parole synthétique et un sinus, pas sur du matériel musical varié : à valider à l'écoute (percussions, mix complet).
 - **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
   rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.

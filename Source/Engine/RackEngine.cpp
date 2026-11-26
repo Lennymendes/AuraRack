@@ -95,6 +95,7 @@ void RackEngine::prepare (double newSampleRate, int /*maxBlockSize : traité par
     std::lock_guard<std::mutex> lock (structMutex);
 
     sampleRate = newSampleRate;
+    loudness.prepare (newSampleRate);
     maxModuleLatencySamples = maxModuleLatency (sampleRate);
 
     for (auto* buf : { &rackInL, &rackInR, &dryL, &dryR, &wetL, &wetR, &prevL, &prevR, &rawL, &rawR, &gainIn, &reorderBuf })
@@ -383,6 +384,12 @@ void RackEngine::processChunk (double* L, double* R, int n, const double* scL, c
     holdMax (meters.inputPeak[1], peakInR);
     holdMax (meters.outputPeak[0], peakOutL);
     holdMax (meters.outputPeak[1], peakOutR);
+
+    if (loudnessEnabled.load (std::memory_order_relaxed))
+    {
+        if (loudnessResetRequested.exchange (false, std::memory_order_acq_rel)) loudness.reset();
+        loudness.process (L, R, n, loudnessMono.load (std::memory_order_relaxed));
+    }
 }
 
 void RackEngine::adoptIncoming (Slot& s, int /*slotIndex*/) noexcept

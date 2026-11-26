@@ -7,9 +7,10 @@
 
 namespace
 {
-    constexpr int kStateVersion = 2;   // 2 : AuraComp à 3 algorithmes, 10 paramètres génériques par slot
+    constexpr int kStateVersion = 3;   // 3 : E9DS, réglages d'interface (langue, aide, LUFS) ; 2 : AuraComp à 3 algorithmes, 10 paramètres génériques
     const juce::Identifier kOrderProperty { "order" };
     const juce::Identifier kVersionProperty { "auraRackVersion" };
+    const juce::Identifier kUiLanguage { "uiLanguage" }, kUiInfo { "uiInfo" }, kUiLoudness { "uiLoudness" }, kUiSlot { "uiSlot" };
 
     juce::String orderToString (const aura::SlotOrder& o)
     {
@@ -97,6 +98,7 @@ bool AuraRackProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void AuraRackProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate.store (sampleRate);
+    engine.setLoudnessMono (getMainBusNumInputChannels() == 1);
     engine.prepare (sampleRate, samplesPerBlock);
 
     // 4 canaux de travail : L, R, Sidechain L, Sidechain R. Un bloc plus grand est traité par morceaux.
@@ -272,6 +274,27 @@ void AuraRackProcessor::moveSlot (int fromPosition, int toPosition)
         apvts.state.setProperty (kOrderProperty, orderToString (engine.getOrder()), nullptr);
 }
 
+AuraRackProcessor::UiSettings AuraRackProcessor::getUiSettings() const
+{
+    UiSettings u;
+    u.language = juce::jlimit (0, 15, (int) apvts.state.getProperty (kUiLanguage, 0));
+    u.info = (bool) apvts.state.getProperty (kUiInfo, false);
+    u.loudness = (bool) apvts.state.getProperty (kUiLoudness, false);
+    u.selectedSlot = juce::jlimit (0, aura::kNumSlots - 1, (int) apvts.state.getProperty (kUiSlot, 0));
+    return u;
+}
+
+void AuraRackProcessor::setUiSettings (const UiSettings& u)
+{
+    const auto before = getUiSettings();
+    apvts.state.setProperty (kUiLanguage, u.language, nullptr);
+    apvts.state.setProperty (kUiInfo, u.info, nullptr);
+    apvts.state.setProperty (kUiLoudness, u.loudness, nullptr);
+    apvts.state.setProperty (kUiSlot, juce::jlimit (0, aura::kNumSlots - 1, u.selectedSlot), nullptr);
+    if (u.loudness && ! before.loudness) engine.requestLoudnessReset();   // nouvelle mesure à chaque activation
+    engine.setLoudnessEnabled (u.loudness);
+}
+
 //==============================================================================
 void AuraRackProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -299,6 +322,7 @@ void AuraRackProcessor::setStateInformation (const void* data, int sizeInBytes)
     else
         engine.setOrder (aura::RackRouting::identity());
 
+    engine.setLoudnessEnabled (getUiSettings().loudness);
     setLatencySamples (engine.getRequestedLatency());
 }
 
