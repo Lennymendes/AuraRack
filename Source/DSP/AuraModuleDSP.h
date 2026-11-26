@@ -15,8 +15,8 @@ namespace aura
 {
 /** Types de module. L'ordre est celui du sélecteur de slot (0 = slot vide) et ne doit jamais changer : il est sauvegardé. */
 // L'ordre est persisté dans les sessions : on n'ajoute qu'à la fin.
-enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b };
-inline constexpr int kNumModuleTypes = 9;
+enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b, l9a };
+inline constexpr int kNumModuleTypes = 10;
 
 /** Nombre de paramètres génériques par slot (le module le plus riche en utilise 10). */
 inline constexpr int kMaxModuleParams = 10;
@@ -163,6 +163,10 @@ public:
     /** Crête de sortie (linéaire) depuis le dernier appel, puis remise à zéro — voyant de saturation (W9BMK1).
         Appelée une fois par bloc par le thread audio. */
     virtual double takeStatusPeak() noexcept { return 0.0; }
+
+    /** Valeur d'affichage propre au module, lue par l'interface (dernière valeur, pas une crête) :
+        W9BMK1 = seuil effectif (dB), L9A = niveau de sortie à balistique VU (dBFS RMS). 0 pour les autres. */
+    virtual double getMeterAux() const noexcept { return 0.0; }
 
     double getSampleRate() const noexcept { return sampleRate; }
 

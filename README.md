@@ -1,14 +1,15 @@
 # AuraRack 0.3 — NextDSP · rack multi-effets DXD (VST3 / AU)
 
-Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **8 modules** DSP natifs,
+Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **9 modules** DSP natifs,
 traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marque **NextDSP**, suite **AuraSuite**
 (Aura, AuraEngine, AuraDrum, AuraPitch, AuraRack).
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 7 modules,
-**AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp) et **éditeur NextDSP** (anthracite `#0B0C10`, rack en grille
-de 10 cartes, glisser-déposer, réduction de gain et niveaux en direct).
+**État** : Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
+**AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, rack en grille
+de 10 cartes, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
+**Auto Focus**) et **L9A** (LA-2A).
 
 ## Compiler
 
@@ -35,11 +36,11 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (154 paramètres), textes qui suivent le module du slot |
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
-| `Source/UI/` | `NextLookAndFeel` (vectoriel), `RackView` (grille + glisser-déposer), `SlotComponent`, `TopBar`, `Widgets.h`, `W9bFaceplate` (façade W9BMK1) |
+| `Source/UI/` | `NextLookAndFeel` (vectoriel), `RackView` (grille + glisser-déposer), `SlotComponent`, `TopBar`, `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate` |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (93 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (136 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, rendu PNG (7 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (11 vérifications) |
 
 ## Architecture audio
 
@@ -92,7 +93,7 @@ Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack),
 *Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
-## Les 8 modules
+## Les 9 modules
 
 | Module | Algorithme | Paramètres |
 |---|---|---|
@@ -104,7 +105,8 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraDelay** | Ping-pong stéréo continu (0 % = deux delays, 100 % = alternance L / R), Lagrange 3e ordre, temps lissé (glissement type bande), Low Cut / High Cut TPT dans la boucle, retard de groupe du High Cut compensé. | Time, Feedback, Ping-Pong, Low Cut, High Cut, R / L |
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
 
-| **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output |
+| **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée et **Auto Focus** : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output, Auto Focus, Focus |
+| **L9A** | Amplificateur de nivellement opto (esprit LA-2A) avec façade dédiée : voir la section « L9A ». | Peak Reduction, Gain, Mode, Meter |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -133,7 +135,7 @@ appareils, **calibrés par mesure et non par comparaison avec le matériel** : �
 de l'AuraComp existent toujours ; chaque algorithme n'utilise que les siens (l'interface n'affiche que ceux-là), ce qui
 évite qu'un changement d'algorithme réinterprète des valeurs.
 
-## W9BMK1 : compresseur CL 1B et sa façade
+## W9BMK1 : compresseur CL 1B, Auto Focus et façade
 
 DSP (`Source/DSP/Modules/AuraW9B.h`), tout en `double`, latence 0, partageant `CompCommon.h` avec l'AuraComp
 (cellule opto à temps réglables, genou 10 dB, étage « lampe »). Chaîne : Input → clé (HP 60 Hz, panneau EL τ 0,5 à 2 ms)
@@ -142,12 +144,80 @@ inhérente à la cellule) → étage lampe → Output. Pas d'entrée Key ni de c
 n'exposer que des contrôles utiles. L'étage lampe est évalué directement à 352,8 / 384 kHz (ADAA en dessous de 176,4 kHz) :
 aucun affaiblissement des aigus en DXD (20 kHz vs 1 kHz : 0,0001 dB).
 
-**Façade** (`Source/UI/W9bFaceplate.*`, vectorielle, aucune image) : plaque bleue anodisée brossée avec vis et trame de
-points, six potards en aluminium usiné avec anneau de LED ambre, VU rétro-éclairé (réduction de gain, aiguille
-masse-ressort), voyant rouge = crête de sortie (de −6 à 0 dBFS), un seul interrupteur ACTIVE / BYPASS, logo script
-(police script installée, sinon serif italique). Deux mises en page : large (façade de rack) et compacte (carte de slot).
-Chaque contrôle correspond à un paramètre réel (p1..p6 du slot et Bypass du slot) ; rien de décoratif n'est actif.
-Le Mix du slot reste disponible (compression parallèle) ; In / Out / Bypass génériques sont masqués pour éviter les doublons.
+### AUTO FOCUS (`Source/DSP/Modules/FocusTracker.h`)
+
+Paramètres **Auto Focus** (Manual / Auto) et **Focus** (1 à 12 dB, continu). En Auto, le Threshold est piloté par un suiveur
+lent qui vise une **réduction de gain moyenne** égale à Focus, quel que soit le niveau d'entrée. Deux étages, en dB, constantes
+en secondes (même comportement de 44,1 à 384 kHz) :
+
+1. **Anticipation** : niveau moyen du programme (moyenne lente de 3 s du niveau vu par le détecteur) ; le seuil qui donnerait
+   exactement la réduction visée à ce niveau est obtenu par **inversion analytique** de la courbe statique (genou compris).
+   Le seuil l'approche en lissage τ 0,5 s et à vitesse limitée à 6 dB/s.
+2. **Correction lente** : un intégrateur (±12 dB) compare la réduction réellement appliquée (moyenne τ 1,5 s) à la cible et
+   rattrape l'écart « réduction au niveau moyen » / « moyenne de la réduction ». Il n'intègre que lorsque le seuil a rejoint
+   l'anticipation et s'arrête contre une butée (pas d'emballement).
+
+Protection contre le pompage : porte absolue à −60 dB (le silence gèle tout), porte relative (18 dB sous la moyenne du
+programme : une pause ou un creux entre syllabes gèle aussi la boucle ; au-delà de 2,5 s c'est un vrai changement de
+programme et la boucle reprend), un clic de 5 ms pèse ≈ 5 ms / 3 s dans la moyenne. À l'activation le seuil part du réglage
+manuel (aucun saut) ; à la désactivation il glisse vers lui (20 ms). **Le Threshold manuel est mis de côté pendant l'Auto**
+(il est conservé et retrouvé en Manual). Mesuré sur une parole synthétique (syllabes de 180 ms, niveaux sur 10 dB, pauses) :
+
+| Mesure | Résultat |
+|---|---|
+| Réduction moyenne sur les syllabes, cibles 3 / 6 / 10 dB | 2,8 / 5,7 / 9,5 dB (−0,2 à −0,5 dB) ; −24 ou −12 dBFS : mêmes valeurs à 0,1 dB près |
+| Excursion du seuil en régime établi | 0,2 dB sur 0,5 s (échelle syllabe), 0,8 dB sur une phrase de 3,3 s |
+| Vitesse maximale du seuil | 6 dB/s |
+| Parole +10 dB | seuil +9,3 dB, retour à la cible (5,5 dB pour 6 visés) en < 30 s |
+| Clic de 5 ms à +20 dB / pause de 2 s à −45 dB / silence de 5 s (écart à la même parole sans l'événement) | seuil déplacé de 0,35 dB / −0,17 dB / 0,01 dB |
+| 44,1 kHz vs 384 kHz | écart de seuil et de réduction < 0,01 dB |
+
+La réduction « moyenne » est celle des parties actives du programme (hors pauses et creux), c'est celle que lit le VU-mètre pendant
+qu'on joue ; elle peut s'écarter de la cible de quelques dixièmes de dB selon la matière. Le suiveur est lent par construction :
+une dizaine de secondes pour se caler après un changement de programme.
+
+### Façade
+
+`Source/UI/W9bFaceplate.*` (vectorielle, aucune image) : plaque bleue anodisée brossée avec vis et trame de points, sept potards
+en aluminium usiné avec anneau de LED ambre (Input, Thresh, Ratio, Focus, Attack, Release, Output), VU rétro-éclairé
+(réduction de gain, aiguille masse-ressort), voyant rouge = crête de sortie (de −6 à 0 dBFS), commutateur MANUAL / AUTO, un
+seul interrupteur ACTIVE / BYPASS, logo script (police script installée, sinon serif italique). Deux mises en page : large
+(façade de rack) et compacte (carte de slot). **En AUTO** : le potard Thresh n'est plus réglable, affiche le seuil effectif
+calculé par le moteur et se nomme « Thresh auto » ; Focus s'allume (estompé en Manual) et un repère bleu sur le VU marque la
+cible : l'aiguille converge vers lui. Chaque contrôle est un vrai paramètre (p1..p8 du slot et Bypass du slot), le test UI le
+vérifie (un contrôle = un paramètre distinct). Le Mix du slot reste disponible ; In / Out / Bypass génériques sont masqués.
+
+## L9A : amplificateur de nivellement opto (esprit LA-2A)
+
+DSP (`Source/DSP/Modules/AuraL9A.h`), `double`, latence 0, constantes en secondes : même réponse de 44,1 à 384 kHz.
+Paramètres : **Peak Reduction** (niveau envoyé au détecteur, pas un seuil), **Gain** (make-up, −12 à +30 dB), **Mode**
+(Comp / Limit), **Meter** (GR / Output). Chaîne : clé liée stéréo (HP 30 Hz, panneau EL) → courbe softplus → cellule opto
+à 2 voies + mémoire (relâchement dépendant du programme) → Gain → étage lampe.
+
+| Mode | Courbe | Cellule |
+|---|---|---|
+| Comp | ratio effectif ≈ 3:1, genou doux de 10 dB | attaque 10 ms, voie rapide 60 ms |
+| Limit | ratio effectif ≈ 10:1, genou de 4 dB | attaque 6 ms, voie rapide 45 ms |
+
+Le passage Comp ↔ Limit est lissé (20 ms) et la cellule garde son état : pas de clic (variation de la réduction < 0,01 dB par
+échantillon). Le module publie (`getMeterAux`) son **niveau de sortie à balistique VU** (deux pôles de 45 ms, 99 % en ≈ 300 ms,
+RMS en dBFS) : 0 VU = −18 dBFS RMS. `Meter` est un vrai paramètre (sauvegardé, automatisable) qui choisit ce que la façade
+affiche ; il ne change pas le son. Mesures : relâchement à 50 % en 57 ms après un passage de 150 ms, 730 ms après 12 s de
+compression ; invariance en fréquence 0,04 dB ; 20 kHz vs 1 kHz : 0,001 dB ; contenu non harmonique à 384 kHz : −151 dB.
+
+Façade (`Source/UI/L9aFaceplate.*`) : panneau argent brossé, VU au centre (échelle VU ou réduction de gain), GAIN à gauche,
+PEAK REDUCTION à droite, trois interrupteurs : COMP / LIMIT, METER GR / OUT, ACTIVE / BYPASS. Constantes calibrées par
+mesure, pas par comparaison avec le matériel.
+
+## Ajouter un module au rack
+
+1. **DSP** : une classe `AuraXxx : AuraModuleDSP` avec `info()` (`ParamSpec`), `setParameter`, `process`, `reset`, et au besoin
+   `getGainReductionDb`, `takeStatusPeak` (crête, voyant) ou `getMeterAux` (valeur d'affichage propre au module) ; un nouvel
+   identifiant **à la fin** de `ModuleType` (l'ordre est persisté), la ligne dans `ModuleRegistry.h`.
+2. **Interface** : sans façade, la carte générique affiche les paramètres ; avec façade, une classe `XxxFaceplate : Faceplate`
+   construite avec les briques de `FaceplateKit.h` (`PlateKnob`, `PlateSwitch`, `VuDial`, thème), une ligne dans
+   `Faceplate::exists()` / `Faceplate::create()`, et une couleur dans `NextLookAndFeel::accentFor`.
+3. **Tests** : un test DSP (statique, fréquences d'échantillonnage, DXD) et la vérification « un contrôle = un paramètre ».
 
 ## L'éditeur NextDSP
 
@@ -168,7 +238,7 @@ Le Mix du slot reste disponible (compression parallèle) ; In / Out / Bypass gé
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 93 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
+`aurarack_dsp_test` (sans JUCE, 136 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 7) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -216,7 +286,8 @@ dans l'état (`order="0,1,…"`).
 - **Interface** : rendue et testée sans fenêtre (rendu PNG, glisser-déposer simulé) ; l'aspect et la fluidité dans de vrais
   DAW (macOS, Windows, HiDPI) restent à valider. Pas encore d'affichage de courbes (EQ, courbe de transfert du comp).
 - **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
-- **W9BMK1** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façade non vue dans un vrai DAW.
+- **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
+- **Auto Focus** : lent par construction (≈ 10 s pour se caler après un changement de programme) ; le Threshold manuel est ignoré pendant l'Auto ; testé sur une parole synthétique et un sinus, pas sur du matériel musical varié : à valider à l'écoute (percussions, mix complet).
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
   rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.

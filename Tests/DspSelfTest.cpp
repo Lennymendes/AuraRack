@@ -1002,8 +1002,8 @@ static void testW9b()
     std::puts ("\n== 12. W9BMK1 (compresseur opto à lampes, esprit CL 1B)");
     using W = AuraW9B;
 
-    check (W::info().params.size() == 6, "6 paramètres : Input, Threshold, Ratio, Attack, Release, Output");
-    check (W::info().visibleMask (0) == 0x3Fu, "Tous les paramètres sont visibles (aucun bouton mort)");
+    check (W::info().params.size() == 8, "8 paramètres : Input, Threshold, Ratio, Attack, Release, Output, Auto Focus, Focus");
+    check (W::info().visibleMask (0) == 0xFFu, "Tous les paramètres sont visibles (aucun bouton mort)");
 
     // --- Réduction statique : Input pousse la clé ; theorie = courbe à genou 10 dB.
     {
@@ -1116,6 +1116,456 @@ static void testW9b()
     }
 }
 
+
+//==============================================================================
+// Signal « parole » déterministe : syllabes de 180 ms (enveloppe en cosinus surélevé, niveaux variant sur 10 dB),
+// petits creux de 60 ms, phrases de 10 syllabes séparées de 0,9 s de quasi-silence. Porteuse à 3 harmoniques.
+struct SpeechSource
+{
+    SpeechSource()
+    {
+        std::uint32_t seed = 12345u;
+        for (auto& a : amps)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            a = std::pow (10.0, -10.0 * ((double) (seed >> 8) / 16777216.0) / 20.0);
+        }
+    }
+    static bool inSyllable (double t) { const double p = std::fmod (t, 3.3); return p < 2.4 && std::fmod (p, 0.24) < 0.18; }
+    double operator() (double t) const
+    {
+        const double period = 3.3, p = std::fmod (t, period);
+        const double carrier = (std::sin (dsp::kTwoPi * 180.0 * t) + 0.5 * std::sin (dsp::kTwoPi * 360.0 * t)
+                                + 0.3 * std::sin (dsp::kTwoPi * 540.0 * t)) / 1.6;
+        if (p >= 2.4) return 1.0e-4 * carrier;                              // pause entre phrases (-80 dB)
+        const auto k = (std::size_t) (std::floor (t / period) * 10.0 + std::floor (p / 0.24));
+        const double q = std::fmod (p, 0.24);
+        const double env = q < 0.18 ? 0.5 - 0.5 * std::cos (dsp::kTwoPi * q / 0.18) : 0.03;
+        return amps[k % amps.size()] * env * carrier;
+    }
+    std::array<double, 64> amps {};
+};
+
+struct FocusRun { std::vector<double> time, threshold, reduction, active; };   // active = 1 pendant une syllabe
+
+/** Fait tourner le W9BMK1 sur la parole. `levelDb(t)` : niveau (dBFS) de la parole ; `extraDb(t)` : gain supplémentaire par échantillon. */
+static FocusRun runFocus (AuraW9B& c, double fs, double seconds, const std::function<double (double)>& levelDb,
+                          const std::function<double (double)>& extraDb = {}, double blockSeconds = 0.002)
+{
+    static const SpeechSource speech;
+    FocusRun r;
+    const int block = std::max (1, (int) std::lround (blockSeconds * fs));
+    const auto total = (std::size_t) (seconds * fs);
+    Buf L ((std::size_t) block), R ((std::size_t) block);
+    for (std::size_t off = 0; off < total; off += (std::size_t) block)
+    {
+        const int n = (int) std::min<std::size_t> ((std::size_t) block, total - off);
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = (double) (off + (std::size_t) i) / fs;
+            double g = std::pow (10.0, levelDb (t) / 20.0);
+            if (extraDb) g *= std::pow (10.0, extraDb (t) / 20.0);
+            L[(std::size_t) i] = R[(std::size_t) i] = g * speech (t);
+        }
+        c.process (L.data(), R.data(), n, {});
+        r.time.push_back ((double) (off + (std::size_t) n) / fs);
+        r.threshold.push_back (c.getMeterAux());
+        r.reduction.push_back (c.getGainReductionDb());
+        r.active.push_back (SpeechSource::inSyllable (r.time.back()) ? 1.0 : 0.0);
+    }
+    return r;
+}
+
+static double meanBetween (const std::vector<double>& t, const std::vector<double>& v, double t0, double t1)
+{
+    double s = 0.0; int n = 0;
+    for (std::size_t i = 0; i < t.size(); ++i) if (t[i] >= t0 && t[i] < t1) { s += v[i]; ++n; }
+    return n > 0 ? s / n : 0.0;
+}
+/** Moyenne pendant les syllabes seulement (ce que le suiveur appelle « réduction moyenne » : pauses et creux exclus). */
+static double meanActive (const FocusRun& r, double t0, double t1)
+{
+    double s = 0.0; int n = 0;
+    for (std::size_t i = 0; i < r.time.size(); ++i) if (r.time[i] >= t0 && r.time[i] < t1 && r.active[i] > 0.5) { s += r.reduction[i]; ++n; }
+    return n > 0 ? s / n : 0.0;
+}
+static double spanBetween (const std::vector<double>& t, const std::vector<double>& v, double t0, double t1)
+{
+    double lo = 1e9, hi = -1e9;
+    for (std::size_t i = 0; i < t.size(); ++i) if (t[i] >= t0 && t[i] < t1) { lo = std::min (lo, v[i]); hi = std::max (hi, v[i]); }
+    return hi - lo;
+}
+/** Plus grande excursion (crête à crête) du seuil dans une fenêtre glissante de `win` secondes. */
+static double worstWindowSpan (const FocusRun& r, double t0, double t1, double win)
+{
+    double worst = 0.0;
+    for (double a = t0; a + win <= t1; a += win * 0.25) worst = std::max (worst, spanBetween (r.time, r.threshold, a, a + win));
+    return worst;
+}
+static double maxSlew (const FocusRun& r)
+{
+    double w = 0.0;
+    for (std::size_t i = 1; i < r.time.size(); ++i) w = std::max (w, std::abs (r.threshold[i] - r.threshold[i - 1]) / (r.time[i] - r.time[i - 1]));
+    return w;
+}
+
+static void prepareFocus (AuraW9B& c, double fs, double focusDb, bool on = true, double ratio = 4.0)
+{
+    c.prepare (fs, 256);
+    setParam (c, AuraW9B::ratio, ratio);
+    setParam (c, AuraW9B::attack, 10.0);
+    setParam (c, AuraW9B::release, 200.0);
+    setParam (c, AuraW9B::threshold, -18.0);
+    setParam (c, AuraW9B::focus, focusDb);
+    setParam (c, AuraW9B::autoFocus, on ? 1.0 : 0.0);
+    c.reset();
+}
+
+static void testFocus()
+{
+    std::puts ("\n== 13. W9BMK1 · AUTO FOCUS (suivi lent du Threshold vers une réduction visée)");
+    using W = AuraW9B;
+    const double fs = 48000.0;
+
+    // --- Inversion analytique de la courbe statique : exacte (genou compris).
+    {
+        double worst = 0.0;
+        for (double ratio : { 1.5, 2.0, 4.0, 10.0 })
+            for (double g : { 0.5, 1.0, 2.5, 3.0, 6.0, 12.0 })
+            {
+                const double thr = compdetail::FocusTracker::thresholdFor (-20.0, g, ratio, 10.0);
+                worst = std::max (worst, std::abs (compdetail::kneeReduction (-20.0, thr, ratio, 10.0) - g));
+            }
+        check (worst < 1e-9, "Inversion de la courbe (ratios 1,5 à 10, cibles 0,5 à 12 dB, genou 10 dB)", worst, "dB d'écart");
+    }
+
+    // --- La réduction moyenne atteint la cible, quel que soit le niveau d'entrée.
+    for (double target : { 3.0, 6.0, 10.0 })
+        for (double level : { -24.0, -12.0 })
+        {
+            W c;
+            prepareFocus (c, fs, target);
+            auto r = runFocus (c, fs, 45.0, [level] (double) { return level; });
+            const double mean = meanActive (r, 35.0, 45.0);
+            char what[128];
+            std::snprintf (what, sizeof (what), "Cible %.0f dB, parole à %.0f dBFS : réduction moyenne sur les syllabes (35-45 s)", target, level);
+            check (std::abs (mean - target) < 1.0, what, mean, "dB");
+        }
+
+    // --- Anti-pompage : seuil quasi immobile en régime établi, vitesse limitée.
+    {
+        W c;
+        prepareFocus (c, fs, 6.0);
+        auto r = runFocus (c, fs, 60.0, [] (double) { return -20.0; });
+        check (worstWindowSpan (r, 30.0, 60.0, 0.5) < 0.3, "Régime établi : excursion du seuil sur 0,5 s (échelle syllabe) < 0,3 dB", worstWindowSpan (r, 30.0, 60.0, 0.5), "dB");
+        check (worstWindowSpan (r, 30.0, 60.0, 3.3) < 1.5, "Régime établi : excursion du seuil sur une phrase (3,3 s) < 1,5 dB", worstWindowSpan (r, 30.0, 60.0, 3.3), "dB");
+        check (maxSlew (r) <= 6.0 + 0.05, "Vitesse maximale du seuil ≤ 6 dB/s", maxSlew (r), "dB/s");
+    }
+
+    // --- Changement de niveau de +10 dB : suivi en quelques secondes, sans dépassement excessif.
+    {
+        W c;
+        prepareFocus (c, fs, 6.0);
+        auto r = runFocus (c, fs, 70.0, [] (double t) { return t < 35.0 ? -24.0 : -14.0; });
+        const double before = meanBetween (r.time, r.threshold, 30.0, 35.0), after = meanBetween (r.time, r.threshold, 65.0, 70.0);
+        check (std::abs ((after - before) - 10.0) < 1.5, "Parole +10 dB : le seuil monte d'environ 10 dB", after - before, "dB");
+        check (std::abs (meanActive (r, 60.0, 70.0) - 6.0) < 1.0, "… et la réduction revient à la cible", meanActive (r, 60.0, 70.0), "dB");
+        double worst = 0.0;   // dépassement : pire réduction moyennée sur 1 s juste après l'échelon
+        for (double t0 = 35.0; t0 < 50.0; t0 += 0.5) worst = std::max (worst, meanBetween (r.time, r.reduction, t0, t0 + 1.0));
+        check (worst < 6.0 + 7.0, "Échelon +10 dB : la réduction (moyenne sur 1 s) reste sous la cible + 7 dB", worst, "dB");
+    }
+
+    // --- Transitoire isolé et pauses : comparaison à la même parole SANS l'événement (le seuil dérive très lentement
+    //     de lui-même ; seul l'écart dû à l'événement compte).
+    {
+        auto steady = [&] (const std::function<double (double)>& level, const std::function<double (double)>& extra)
+        {
+            W c;
+            prepareFocus (c, fs, 6.0);
+            return runFocus (c, fs, 45.0, level, extra);
+        };
+        const auto level0 = [] (double) { return -20.0; };
+        const auto ref = steady (level0, {});
+        auto delta = [&] (const FocusRun& r, double t0, double t1) { return meanBetween (r.time, r.threshold, t0, t1) - meanBetween (ref.time, ref.threshold, t0, t1); };
+
+        const auto click = steady (level0, [] (double t) { return (t >= 30.0 && t < 30.005) ? 20.0 : 0.0; });
+        check (std::abs (delta (click, 33.0, 36.0)) < 0.4, "Clic de 5 ms à +20 dB : le seuil bouge de moins de 0,4 dB", delta (click, 33.0, 36.0), "dB");
+
+        const auto soft = steady ([] (double t) { return (t >= 30.0 && t < 32.0) ? -65.0 : -20.0; }, {});
+        check (std::abs (delta (soft, 32.0, 33.0)) < 0.5, "Pause de 2 s à -45 dB sous la parole : le seuil ne réagit pas (1 s après la reprise)", delta (soft, 32.0, 33.0), "dB");
+
+        const auto mute = steady ([] (double t) { return (t >= 30.0 && t < 35.0) ? -100.0 : -20.0; }, {});
+        double frozen = 0.0;   // pendant le silence, le seuil est exactement celui d'avant
+        for (std::size_t i = 0; i < mute.time.size(); ++i)
+            if (mute.time[i] > 30.1 && mute.time[i] < 35.0) frozen = std::max (frozen, std::abs (mute.threshold[i] - meanBetween (mute.time, mute.threshold, 29.99, 30.01)));
+        check (frozen < 0.05, "Silence de 5 s (sous la porte à -60 dB) : seuil gelé", frozen, "dB");
+        check (std::abs (delta (mute, 35.0, 36.0)) < 0.5, "… et la reprise ne le déplace pas (1 s après)", delta (mute, 35.0, 36.0), "dB");
+    }
+
+    // --- Activation / désactivation sans saut, et le manuel est intact.
+    {
+        W c;
+        prepareFocus (c, fs, 6.0, false);
+        auto before = runFocus (c, fs, 2.0, [] (double) { return -20.0; });
+        check (std::abs (before.threshold.back() - (-18.0)) < 1e-9, "Mode manuel : le seuil publié est le réglage Threshold", before.threshold.back(), "dB");
+        setParam (c, W::autoFocus, 1.0);
+        auto on = runFocus (c, fs, 0.02, [] (double) { return -20.0; });
+        check (std::abs (on.threshold.front() - (-18.0)) < 0.2, "Activation : le seuil part du réglage manuel (pas de saut)", on.threshold.front() + 18.0, "dB");
+        runFocus (c, fs, 20.0, [] (double) { return -20.0; });
+        setParam (c, W::autoFocus, 0.0);
+        auto off = runFocus (c, fs, 0.5, [] (double) { return -20.0; });
+        check (std::abs (off.threshold.back() - (-18.0)) < 1e-9, "Désactivation : retour au Threshold manuel", off.threshold.back(), "dB");
+
+        // En mode manuel, Focus n'a aucune influence : sortie bit-identique.
+        W a, b;
+        prepareFocus (a, fs, 2.0, false);
+        prepareFocus (b, fs, 11.0, false);
+        Buf la = sine (48000, 700.0, fs, 0.3), ra = la, lb = la, rb = la;
+        runModule (a, la, ra);
+        runModule (b, lb, rb);
+        check (la == lb && ra == rb, "Mode manuel : sortie bit-identique quelle que soit la valeur de Focus");
+    }
+
+    // --- Même comportement à 44,1 et 384 kHz.
+    {
+        std::vector<double> thr, red;
+        for (double rate : { 44100.0, 384000.0 })
+        {
+            W c;
+            prepareFocus (c, rate, 6.0);
+            auto r = runFocus (c, rate, 30.0, [] (double) { return -20.0; }, {}, 0.004);
+            thr.push_back (meanBetween (r.time, r.threshold, 22.0, 30.0));
+            red.push_back (meanBetween (r.time, r.reduction, 22.0, 30.0));
+        }
+        check (std::abs (thr[0] - thr[1]) < 0.5, "Seuil établi : 44,1 kHz vs 384 kHz", thr[0] - thr[1], "dB d'écart");
+        check (std::abs (red[0] - red[1]) < 0.5, "Réduction moyenne : 44,1 kHz vs 384 kHz", red[0] - red[1], "dB d'écart");
+    }
+}
+
+//==============================================================================
+static void testL9a()
+{
+    std::puts ("\n== 14. L9A (amplificateur de nivellement opto, esprit LA-2A)");
+    using L = AuraL9A;
+
+    check (L::info().params.size() == 4, "4 paramètres : Peak Reduction, Gain, Mode, Meter");
+    check (L::info().visibleMask (0) == 0xFu, "Tous les paramètres sont visibles (aucun bouton mort)");
+
+    // --- Réduction statique = courbe théorique, et Limit plus franc que Comp.
+    {
+        const double fs = 96000.0;
+        double grComp[2] {}, grLimit[2] {}, theory[2] {};
+        int k = 0;
+        for (double amp : { 0.063, 0.25 })   // -24 / -12 dBFS
+        {
+            for (int mode = 0; mode < 2; ++mode)
+            {
+                L c;
+                c.prepare (fs, 256);
+                setParam (c, L::peakReduction, 60.0);
+                setParam (c, L::mode, (double) mode);
+                c.reset();
+                Buf x = sine ((std::size_t) (fs * 3.0), 1000.0, fs, amp), r = x;
+                runModule (c, x, r);
+                double m = 0.0;
+                for (int i = 0; i < 960; ++i)
+                {
+                    double l = amp * std::sin (dsp::kTwoPi * 1000.0 * (double) (x.size() + (std::size_t) i) / fs), rr = l;
+                    c.process (&l, &rr, 1, {});
+                    m += c.getGainReductionDb() / 960.0;
+                }
+                (mode == 0 ? grComp : grLimit)[k] = m;
+                if (mode == 0) theory[k] = c.gainReductionFor (dsp::gainToDb (amp));
+            }
+            ++k;
+        }
+        check (std::abs (grComp[1] - theory[1]) < 0.15, "Comp : réduction statique = théorie (sinus -12 dBFS, Peak Reduction 60 %)", grComp[1] - theory[1], "dB d'écart");
+        check ((grLimit[1] - grLimit[0]) > 1.2 * (grComp[1] - grComp[0]),
+               "Limit : la réduction croît plus vite avec le niveau que Comp (+12 dB d'entrée)", (grLimit[1] - grLimit[0]) - (grComp[1] - grComp[0]), "dB de plus");
+    }
+
+    // --- Dépendance au programme : relâchement court après un passage bref, long après une compression soutenue.
+    {
+        const double fs = 48000.0;
+        auto halfTime = [&] (double burstSeconds)
+        {
+            L c;
+            c.prepare (fs, 256);
+            setParam (c, L::peakReduction, 70.0);
+            c.reset();
+            const std::size_t nBurst = (std::size_t) (burstSeconds * fs), nTail = (std::size_t) (8.0 * fs);
+            Buf x (nBurst + nTail);
+            for (std::size_t i = 0; i < x.size(); ++i)
+                x[i] = (i < nBurst ? 0.5 : 0.002) * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs);
+            Buf r = x;
+            double peak = 0.0;
+            for (std::size_t i = 0; i < x.size(); ++i)
+            {
+                c.process (&x[i], &r[i], 1, {});
+                if (i + 1 == nBurst) peak = c.getGainReductionDb();
+            }
+            // On repart pour mesurer : relâchement après la fin du passage.
+            L d;
+            d.prepare (fs, 256);
+            setParam (d, L::peakReduction, 70.0);
+            d.reset();
+            Buf y (nBurst + nTail);
+            for (std::size_t i = 0; i < y.size(); ++i)
+                y[i] = (i < nBurst ? 0.5 : 0.002) * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs);
+            Buf yr = y;
+            double tHalf = -1.0;
+            for (std::size_t i = 0; i < y.size(); ++i)
+            {
+                d.process (&y[i], &yr[i], 1, {});
+                if (i >= nBurst && tHalf < 0.0 && d.getGainReductionDb() < 0.5 * peak) tHalf = (double) (i - nBurst) / fs;
+            }
+            return tHalf;
+        };
+        const double shortT = halfTime (0.15), longT = halfTime (12.0);
+        check (shortT > 0.0 && shortT < 0.15, "Relâchement à 50 % après un passage de 150 ms", shortT, "s");
+        check (longT > 0.4 && longT > 3.0 * shortT, "Relâchement à 50 % après 12 s de compression : bien plus long", longT, "s");
+    }
+
+    // --- Invariance en fréquence d'échantillonnage (échelon d'amplitude).
+    {
+        const std::vector<double> times { 0.003, 0.01, 0.03, 0.1, 0.3, 1.0 };
+        std::vector<std::vector<double>> res;
+        for (double fs : { 44100.0, 96000.0, 352800.0, 384000.0 })
+        {
+            L c;
+            c.prepare (fs, 256);
+            setParam (c, L::peakReduction, 60.0);
+            c.reset();
+            std::vector<double> t2; for (double t : times) t2.push_back (0.2 + t);
+            res.push_back (reductionAt (c, fs, t2, 0.01, [] (double t) { return (t < 0.2 ? 0.02 : 0.5) * std::sin (dsp::kTwoPi * 1000.0 * t); }));
+        }
+        double worst = 0.0;
+        for (std::size_t r = 0; r < 3; ++r)
+            for (std::size_t k = 0; k < times.size(); ++k)
+                worst = std::max (worst, std::abs (res[r][k] - res[3][k]));
+        check (worst < 0.2, "Invariance en fréquence d'échantillonnage (44,1 / 96 / 352,8 vs 384 kHz)", worst, "dB max");
+    }
+
+    // --- DXD : réponse plate (20 kHz vs 1 kHz) et pas de contenu non harmonique.
+    {
+        const double fs = 384000.0;
+        double g[2] {};
+        int idx = 0;
+        for (double f : { 1000.0, 20000.0 })
+        {
+            L c;
+            c.prepare (fs, 256);
+            setParam (c, L::peakReduction, 0.0);
+            c.reset();
+            const std::size_t n = 65536, warm = (std::size_t) fs;
+            const std::size_t k = (std::size_t) std::lround (f * (double) n / fs);
+            const double fe = (double) k * fs / (double) n;
+            Buf x = sine (warm + n, fe, fs, 0.05), r = x;
+            runModule (c, x, r);
+            g[idx++] = dsp::gainToDb (toneAmplitude (x, warm, n, fe, fs) / 0.05);
+        }
+        check (std::abs (g[1] - g[0]) < 0.02, "DXD : 20 kHz vs 1 kHz sans compression", g[1] - g[0], "dB");
+
+        L c;
+        c.prepare (fs, 256);
+        setParam (c, L::peakReduction, 80.0);
+        c.reset();
+        const std::size_t n = 65536, warm = (std::size_t) (fs * 1.5);
+        const std::size_t k0 = (std::size_t) std::lround (18000.0 * (double) n / fs);
+        const double f0 = (double) k0 * fs / (double) n;
+        Buf x = sine (warm + n, f0, fs, 0.5), r = x;
+        runModule (c, x, r);
+        const double ratio = aliasRatioDb (x, warm, n, k0);
+        check (ratio < -90.0, "Contenu non harmonique, sinus 18 kHz comprimé à 384 kHz", ratio, "dB");
+    }
+
+    // --- Mètre VU : niveau RMS en dBFS, 99 % en ≈ 300 ms.
+    {
+        const double fs = 48000.0;
+        L c;
+        c.prepare (fs, 256);
+        setParam (c, L::peakReduction, 0.0);
+        c.reset();
+        const double amp = 0.1, expected = 20.0 * std::log10 (amp / std::sqrt (2.0));
+        Buf x = sine ((std::size_t) (fs * 1.5), 1000.0, fs, amp), r = x;
+        double at50 = 0.0, at300 = 0.0;
+        for (std::size_t i = 0; i < x.size(); ++i)
+        {
+            c.process (&x[i], &r[i], 1, {});
+            if (i + 1 == (std::size_t) (0.05 * fs)) at50 = c.getMeterAux();
+            if (i + 1 == (std::size_t) (0.30 * fs)) at300 = c.getMeterAux();
+        }
+        check (std::abs (c.getMeterAux() - expected) < 0.3, "VU : niveau de sortie RMS en dBFS (sinus 0,1 -> -23 dBFS)", c.getMeterAux() - expected, "dB d'écart");
+        const double settled = c.getMeterAux();
+        check (at300 > settled - 0.1 && at50 < settled - 3.0, "VU : montée à 99 % en ≈ 300 ms (et lente à 50 ms)", at300 - settled, "dB à 300 ms");
+        Buf z (4800, 0.0), zr = z;
+        runModule (c, z, zr);
+        for (int i = 0; i < 9; ++i) { Buf zz (4800, 0.0), zzr = zz; runModule (c, zz, zzr); }
+        check (c.getMeterAux() < -60.0, "VU : retombe dans le silence", c.getMeterAux(), "dBFS");
+    }
+
+    // --- Comp <-> Limit en cours de signal : la réduction de gain reste continue (pas de clic).
+    {
+        const double fs = 48000.0;
+        L c;
+        c.prepare (fs, 256);
+        setParam (c, L::peakReduction, 60.0);
+        c.reset();
+        double prev = 0.0, worst = 0.0;
+        for (std::size_t i = 0; i < (std::size_t) (fs * 4.0); ++i)
+        {
+            if (i == (std::size_t) (fs * 2.0)) setParam (c, L::mode, 1.0);
+            double l = 0.4 * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs), r = l;
+            c.process (&l, &r, 1, {});
+            if (i > 1000) worst = std::max (worst, std::abs (c.getGainReductionDb() - prev));
+            prev = c.getGainReductionDb();
+        }
+        check (worst < 0.01, "Comp -> Limit pendant le signal : réduction continue", worst, "dB/échantillon");
+    }
+}
+
+
+//==============================================================================
+static void testRackModules()
+{
+    std::puts ("\n== 15. W9BMK1 et L9A dans le rack (types persistés, indicateurs publiés par le moteur)");
+    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && kNumModuleTypes == 10,
+           "Identifiants de type figés (w9b = 8, l9a = 9) : les sessions existantes restent valables");
+
+    const double fs = 96000.0;
+    RackEngine e;
+    TestParams p;
+    p.bind (e);
+    e.prepare (fs, 512);
+    p.setType (e, 0, ModuleType::w9b);
+    p.setType (e, 1, ModuleType::l9a);
+    p.setPlain (0, ModuleType::w9b, AuraW9B::autoFocus, 1.0);
+    p.setPlain (0, ModuleType::w9b, AuraW9B::focus, 6.0);
+    p.setPlain (1, ModuleType::l9a, AuraL9A::peakReduction, 70.0);
+    p.setPlain (1, ModuleType::l9a, AuraL9A::meter, 1.0);
+    e.prepare (fs, 512);
+
+    // 12 s d'un sinus -12 dBFS : le W9BMK1 en Auto déplace son seuil, le L9A comprime et publie son niveau VU.
+    for (int chunk = 0; chunk < 12; ++chunk)
+    {
+        auto L = sine ((std::size_t) fs, 440.0, fs, 0.25), R = L;
+        runEngine (e, L, R, 0, L.size(), 512);
+    }
+    const auto& m = e.getMeters();
+    const double thr = m.slotAux[0].load(), vuDbfs = m.slotAux[1].load();
+    check (thr < -18.5 && thr > -60.0, "Moteur : seuil effectif de l'Auto Focus publié (W9BMK1, slot 1)", thr, "dB");
+    check (m.gainReductionDb[0].load() > 1.0, "Moteur : réduction de gain du W9BMK1 publiée", m.gainReductionDb[0].load(), "dB");
+    check (m.gainReductionDb[1].load() > 1.0, "Moteur : réduction de gain du L9A publiée", m.gainReductionDb[1].load(), "dB");
+    check (vuDbfs < -10.0 && vuDbfs > -40.0, "Moteur : niveau VU du L9A publié (dBFS RMS)", vuDbfs, "dBFS");
+    check (m.slotStatus[0].load() > 0.01, "Moteur : crête de sortie du W9BMK1 publiée (voyant)", m.slotStatus[0].load());
+
+    // Retour au mode manuel : le seuil publié est le réglage manuel (-18 dB par défaut).
+    p.setPlain (0, ModuleType::w9b, AuraW9B::autoFocus, 0.0);
+    auto L = sine (4096, 440.0, fs, 0.25), R = L;
+    runEngine (e, L, R, 0, L.size(), 512);
+    check (std::abs (m.slotAux[0].load() - (-18.0)) < 0.01, "Moteur : Auto Focus désactivé -> seuil manuel publié", m.slotAux[0].load(), "dB");
+}
+
 //==============================================================================
 int main (int argc, char** argv)
 {
@@ -1123,7 +1573,7 @@ int main (int argc, char** argv)
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)

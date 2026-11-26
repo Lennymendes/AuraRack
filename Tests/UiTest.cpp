@@ -3,8 +3,11 @@
 // puis rendu de l'interface en PNG (argument facultatif : dossier de sortie).
 
 #include "../Source/PluginEditor.h"
+#include "../Source/UI/L9aFaceplate.h"
+#include "../Source/UI/W9bFaceplate.h"
 
 #include <cstdio>
+#include <set>
 
 namespace
 {
@@ -62,7 +65,7 @@ int main (int argc, char** argv)
 
     using aura::ModuleType;
     const ModuleType layout[] = { ModuleType::eq, ModuleType::comp, ModuleType::comp, ModuleType::comp, ModuleType::duck,
-                                  ModuleType::clip, ModuleType::limit, ModuleType::delay, ModuleType::verb, ModuleType::w9b };
+                                  ModuleType::clip, ModuleType::limit, ModuleType::delay, ModuleType::l9a, ModuleType::w9b };
     for (int s = 0; s < 10; ++s)
         processor.setSlotModule (s, layout[s]);
     // Slot 2 : Aura-Tube ; slot 3 : L-Comp (choix d'algorithme = paramètre 1, normalisé 0 / 0,5 / 1).
@@ -78,6 +81,12 @@ int main (int argc, char** argv)
     setNormalised (aura::params::generic (9, W::attack), 0.45f);
     setNormalised (aura::params::generic (9, W::release), 0.55f);
     setNormalised (aura::params::generic (9, W::output), 0.62f);
+    setNormalised (aura::params::generic (9, W::autoFocus), 1.0f);
+    setNormalised (aura::params::generic (9, W::focus), 5.0f / 11.0f);   // Focus 6 dB
+    using LL = aura::AuraL9A;
+    setNormalised (aura::params::generic (8, LL::peakReduction), 0.62f);
+    setNormalised (aura::params::generic (8, LL::gain), 0.35f);
+    setNormalised (aura::params::generic (8, LL::mode), 1.0f);
     renderAudio (processor, fs, 200);
 
     AuraRackEditor editor (processor);
@@ -144,17 +153,92 @@ int main (int argc, char** argv)
         juce::FileOutputStream out (dir.getChildFile ("auraRack-editor.png"));
         out.setPosition (0); out.truncate();
         png.writeImageToStream (image, out);
-        // Façade W9BMK1 seule, mise en page large (façade de rack).
+        // Façades seules : grande et compacte, W9BMK1 (Auto Focus) et L9A (vue GR et vue Output).
+        auto snapshot = [&] (juce::Component& c, int w, int h, const char* file)
         {
-            aura::ui::W9bFaceplate plate (processor.getValueTreeState(), 9);
-            plate.setBounds (0, 0, aura::ui::W9bFaceplate::kWideWidth, aura::ui::W9bFaceplate::kWideHeight);
-            for (int i = 0; i < 90; ++i) plate.tick (1.0f / 60.0f, 7.5f, 0.85f);
-            auto wideImage = plate.createComponentSnapshot (plate.getLocalBounds(), true, 1.0f);
-            juce::FileOutputStream wideOut (dir.getChildFile ("w9bmk1-wide.png"));
-            wideOut.setPosition (0); wideOut.truncate();
-            png.writeImageToStream (wideImage, wideOut);
+            c.setBounds (0, 0, w, h);
+            auto img = c.createComponentSnapshot (c.getLocalBounds(), true, 1.0f);
+            juce::FileOutputStream o (dir.getChildFile (file));
+            o.setPosition (0); o.truncate();
+            png.writeImageToStream (img, o);
+        };
+        {
+            const aura::ui::FaceplateFeed feed { 7.5f, 0.85f, -31.0f };
+            aura::ui::W9bFaceplate wide (processor.getValueTreeState(), 9), compact (processor.getValueTreeState(), 9);
+            wide.setBounds (0, 0, 1000, 385); compact.setBounds (0, 0, 240, 262);
+            for (int i = 0; i < 120; ++i) { wide.tick (1.0f / 60.0f, feed); compact.tick (1.0f / 60.0f, feed); }
+            snapshot (wide, 1000, 385, "w9bmk1-wide.png");
+            snapshot (compact, 240, 262, "w9bmk1-compact.png");
+        }
+        {
+            aura::ui::L9aFaceplate wide (processor.getValueTreeState(), 8), compact (processor.getValueTreeState(), 8);
+            wide.setBounds (0, 0, 1000, 385); compact.setBounds (0, 0, 240, 262);
+            for (int i = 0; i < 120; ++i) { wide.tick (1.0f / 60.0f, { 6.0f, 0.0f, -20.0f }); compact.tick (1.0f / 60.0f, { 6.0f, 0.0f, -20.0f }); }
+            snapshot (wide, 1000, 385, "l9a-wide-gr.png");
+            snapshot (compact, 240, 262, "l9a-compact-gr.png");
+            setNormalised (aura::params::generic (8, LL::meter), 1.0f);
+            for (int i = 0; i < 120; ++i) wide.tick (1.0f / 60.0f, { 6.0f, 0.0f, -20.0f });
+            snapshot (wide, 1000, 385, "l9a-wide-out.png");
+            setNormalised (aura::params::generic (8, LL::meter), 0.0f);
         }
         std::printf ("  rendu : %s (%d x %d)\n", dir.getChildFile ("auraRack-editor.png").getFullPathName().toRawUTF8(), image.getWidth(), image.getHeight());
+    }
+
+    // --- Façades : chaque contrôle visible correspond à UN paramètre réel, distinct (aucun bouton décoratif ni doublon).
+    {
+        auto bindingCheck = [&] (juce::Component& face, int slot, int expectedKnobs, int expectedSwitches, const char* name)
+        {
+            auto& apvts = processor.getValueTreeState();
+            auto snapshot = [&] {
+                std::vector<float> v;
+                for (int i = 0; i < aura::kMaxModuleParams; ++i) v.push_back (apvts.getParameter (aura::params::generic (slot, i))->getValue());
+                v.push_back (apvts.getParameter (aura::params::bypass (slot))->getValue());
+                return v;
+            };
+            std::set<int> claimed;
+            int knobs = 0, switches = 0, others = 0, orphan = 0;
+            for (auto* child : face.getChildren())
+            {
+                const auto before = snapshot();
+                if (auto* sl = dynamic_cast<juce::Slider*> (child))
+                {
+                    ++knobs;
+                    sl->setValue (sl->getValue() > 0.5 * (sl->getMinimum() + sl->getMaximum()) ? sl->getMinimum() + 0.2 * (sl->getMaximum() - sl->getMinimum())
+                                                                                              : sl->getMinimum() + 0.8 * (sl->getMaximum() - sl->getMinimum()),
+                                  juce::sendNotificationSync);
+                }
+                else if (auto* bt = dynamic_cast<juce::ToggleButton*> (child))
+                {
+                    ++switches;
+                    bt->setToggleState (! bt->getToggleState(), juce::sendNotificationSync);
+                }
+                else { ++others; continue; }
+                const auto after = snapshot();
+                int changed = 0, index = -1;
+                for (std::size_t i = 0; i < before.size(); ++i) if (std::abs (before[i] - after[i]) > 1.0e-6f) { ++changed; index = (int) i; }
+                if (changed != 1 || ! claimed.insert (index).second) ++orphan;
+            }
+            char what[160];
+            std::snprintf (what, sizeof (what), "%s : %d potards + %d interrupteurs, chacun lié à un paramètre distinct (aucun mort, aucun doublon)", name, knobs, switches);
+            check (knobs == expectedKnobs && switches == expectedSwitches && others == 0 && orphan == 0, what);
+        };
+        aura::ui::W9bFaceplate w9 (processor.getValueTreeState(), 9);
+        aura::ui::L9aFaceplate l9 (processor.getValueTreeState(), 8);
+        w9.setBounds (0, 0, 1000, 385); l9.setBounds (0, 0, 1000, 385);
+        bindingCheck (w9, 9, 7, 2, "W9BMK1");
+        bindingCheck (l9, 8, 2, 3, "L9A");
+
+        // Auto Focus : en AUTO le potard Thresh n'est plus réglable (le moteur le pilote) ; en MANUAL il l'est de nouveau.
+        auto& apvts = processor.getValueTreeState();
+        apvts.getParameter (aura::params::generic (9, aura::AuraW9B::autoFocus))->setValueNotifyingHost (1.0f);
+        w9.tick (1.0f / 60.0f, { 0.0f, 0.0f, -31.0f });
+        juce::Slider* thresh = nullptr;
+        int index = 0;
+        for (auto* child : w9.getChildren()) if (auto* sl = dynamic_cast<juce::Slider*> (child)) { if (index++ == 1) thresh = sl; }
+        check (thresh != nullptr && ! thresh->isEnabled(), "W9BMK1 en AUTO : le potard Thresh est piloté par le moteur (non réglable)");
+        apvts.getParameter (aura::params::generic (9, aura::AuraW9B::autoFocus))->setValueNotifyingHost (0.0f);
+        w9.tick (1.0f / 60.0f, { 0.0f, 0.0f, -31.0f });
+        check (thresh != nullptr && thresh->isEnabled(), "W9BMK1 en MANUAL : le potard Thresh est de nouveau réglable");
     }
 
     std::printf ("\n%d / %d vérifications réussies\n", checks - failures, checks);

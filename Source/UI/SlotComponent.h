@@ -3,7 +3,7 @@
 #pragma once
 
 #include "../PluginProcessor.h"
-#include "W9bFaceplate.h"
+#include "Faceplate.h"
 #include "Widgets.h"
 
 namespace aura::ui
@@ -65,7 +65,7 @@ private:
     GainReductionScope scope;
     std::array<ParamKnob, aura::kMaxModuleParams> knobs;
     ParamKnob mixKnob, inKnob, outKnob;
-    std::unique_ptr<W9bFaceplate> faceplate;   // W9BMK1 : la façade remplace les potentiomètres génériques
+    std::unique_ptr<Faceplate> faceplate;   // W9BMK1, L9A : la façade remplace les potentiomètres génériques
 
     float smoothedReduction = 0.0f, pushClock = 0.0f;
     juce::Rectangle<int> knobArea, footerArea, scopeArea;

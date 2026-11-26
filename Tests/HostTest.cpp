@@ -115,8 +115,8 @@ int main (int argc, char** argv)
            "Paramètres exposés (globaux + 10 slots)", plugin->getParameters().size());
 
     // Slot 1 = AuraLimit, Slot 2 = AuraEQ (latence nulle). Le type est appliqué par le message thread du plugin.
-    setParam (*plugin, "Slot 1 Type", 5.0f / 8.0f);   // 9 types : valeur normalisée = indice / 8
-    setParam (*plugin, "Slot 2 Type", 1.0f / 8.0f);
+    setParam (*plugin, "Slot 1 Type", 5.0f / 9.0f);   // 10 types : valeur normalisée = indice / 9
+    setParam (*plugin, "Slot 2 Type", 1.0f / 9.0f);
     pump (200);
     plugin->prepareToPlay (fs, 512);
     pump (100);
@@ -146,7 +146,7 @@ int main (int argc, char** argv)
 
     // Slot 3 = AuraDuck (Dynamic EQ, clé = bus Sidechain) : un kick sur le Sidechain baisse le sub.
     setParam (*plugin, "Slot 1 Type", 0.0f);
-    setParam (*plugin, "Slot 3 Type", 3.0f / 8.0f);
+    setParam (*plugin, "Slot 3 Type", 3.0f / 9.0f);
     pump (200);
     const auto n = (std::size_t) (fs * 0.6);
     std::vector<double> mainL (n), mainR (n), key (n, 0.0);
@@ -184,8 +184,8 @@ int main (int argc, char** argv)
     auto fresh = format.createInstanceFromDescription (*found[0], fs, 512, error);
     fresh->setBusesLayout (layout);
     fresh->setProcessingPrecision (juce::AudioProcessor::doublePrecision);
-    setParam (*fresh, "Slot 2 Type", 1.0f / 8.0f);
-    setParam (*fresh, "Slot 3 Type", 3.0f / 8.0f);
+    setParam (*fresh, "Slot 2 Type", 1.0f / 9.0f);
+    setParam (*fresh, "Slot 3 Type", 3.0f / 9.0f);
     pump (200);
     setParam (*fresh, "Slot 2 P4", 0.8f);
     fresh->prepareToPlay (fs, 512);

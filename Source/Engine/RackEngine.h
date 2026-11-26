@@ -188,6 +188,7 @@ public:
         mutable std::array<std::atomic<float>, 2> inputPeak {}, outputPeak {};
         std::array<std::atomic<float>, kNumSlots> gainReductionDb {};
         mutable std::array<std::atomic<float>, kNumSlots> slotStatus {};   // crête de sortie du module (voyant), lue par exchange(0)
+        std::array<std::atomic<float>, kNumSlots> slotAux {};   // valeur d'affichage du module (seuil W9BMK1, niveau VU L9A) : dernière valeur
         std::atomic<int> activeLatency { 0 };
         std::atomic<bool> sidechainActive { false };
     };

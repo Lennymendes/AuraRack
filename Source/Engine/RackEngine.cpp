@@ -519,6 +519,7 @@ void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int 
         auto& status = meters.slotStatus[(std::size_t) slotIndex];
         const auto peak = (float) cur->takeStatusPeak();
         if (peak > status.load (std::memory_order_relaxed)) status.store (peak, std::memory_order_relaxed);   // un seul écrivain
+        meters.slotAux[(std::size_t) slotIndex].store ((float) cur->getMeterAux(), std::memory_order_relaxed);
     }
 }
 
