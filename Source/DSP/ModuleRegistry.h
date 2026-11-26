@@ -7,10 +7,14 @@
 #include "Modules/AuraComp.h"
 #include "Modules/AuraDelay.h"
 #include "Modules/AuraDuck.h"
+#include "Modules/AuraD9X.h"
 #include "Modules/AuraE9DS.h"
+#include "Modules/AuraF976.h"
 #include "Modules/AuraEQ.h"
 #include "Modules/AuraL9A.h"
 #include "Modules/AuraLimit.h"
+#include "Modules/AuraSculpt.h"
+#include "Modules/AuraTone.h"
 #include "Modules/AuraVerb.h"
 #include "Modules/AuraV9C3.h"
 #include "Modules/AuraV9P2.h"
@@ -42,6 +46,10 @@ inline const ModuleInfo& moduleInfo (ModuleType t) noexcept
         case ModuleType::e9ds:  return AuraE9DS::info();
         case ModuleType::v9c3:  return AuraV9C3::info();
         case ModuleType::v9p2:  return AuraV9P2::info();
+        case ModuleType::f976:  return AuraF976::info();
+        case ModuleType::d9x:   return AuraD9X::info();
+        case ModuleType::sculpt: return AuraSculpt::info();
+        case ModuleType::tone:  return AuraTone::info();
         case ModuleType::none:  break;
     }
     return emptySlotInfo();
@@ -63,6 +71,10 @@ inline std::unique_ptr<AuraModuleDSP> createModule (ModuleType t)
         case ModuleType::e9ds:  return std::make_unique<AuraE9DS>();
         case ModuleType::v9c3:  return std::make_unique<AuraV9C3>();
         case ModuleType::v9p2:  return std::make_unique<AuraV9P2>();
+        case ModuleType::f976:  return std::make_unique<AuraF976>();
+        case ModuleType::d9x:   return std::make_unique<AuraD9X>();
+        case ModuleType::sculpt: return std::make_unique<AuraSculpt>();
+        case ModuleType::tone:  return std::make_unique<AuraTone>();
         case ModuleType::none:  break;
     }
     return nullptr;

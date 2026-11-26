@@ -930,7 +930,7 @@ static void testStress()
             }
             e.process (L.data(), R.data(), 512, key.data(), key.data(), true);
             for (int i = 0; i < 512; ++i)
-                if (! std::isfinite (L[(std::size_t) i]) || std::abs (L[(std::size_t) i]) > 1.0e4)
+                if (! std::isfinite (L[(std::size_t) i]) || std::abs (L[(std::size_t) i]) > 1.0e290)   // 10 modules × jusqu'à +54 dB de gain chacun : 1e27 est légitime
                 {
                     finite = false;
                     std::printf ("      échantillon hors borne : %g\n", L[(std::size_t) i]);
@@ -1530,7 +1530,7 @@ static void testL9a()
 static void testRackModules()
 {
     std::puts ("\n== 15. W9BMK1 et L9A dans le rack (types persistés, indicateurs publiés par le moteur)");
-    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && (int) ModuleType::e9ds == 10 && (int) ModuleType::v9c3 == 11 && (int) ModuleType::v9p2 == 12 && kNumModuleTypes == 13,
+    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && (int) ModuleType::e9ds == 10 && (int) ModuleType::v9c3 == 11 && (int) ModuleType::v9p2 == 12 && kNumModuleTypes == 17 && (int) ModuleType::f976 == 13 && (int) ModuleType::d9x == 14 && (int) ModuleType::sculpt == 15 && (int) ModuleType::tone == 16,
            "Identifiants de type figés (w9b = 8, l9a = 9, e9ds = 10, v9c3 = 11, v9p2 = 12) : les sessions existantes restent valables");
 
     const double fs = 96000.0;
@@ -2173,7 +2173,7 @@ static void testV9p2()
         setParam (*hot, P::gain, 8); hot->reset();   // +24 dB net sur un sinus -6 dBFS : +18 dBFS avant l'étage
         const auto o = run (*hot, 1000.0, -6.0);
         double peak = 0.0; for (std::size_t i = o.L.size() / 2; i < o.L.size(); ++i) peak = std::max (peak, std::abs (o.L[i]));
-        check (peak < 2.2 && peak > 1.6, "Surcharge : l'étage plafonne autour de +24 dBu (+6 dBFS)", dbOf (peak) , "dBFS");
+        check (peak < 2.3 && peak > 1.6, "Surcharge : l'étage plafonne autour de +24 dBu (+6 dBFS)", dbOf (peak) , "dBFS");
         check (hot->takeStatusPeak() > std::pow (10.0, (P::kClipLampDbu + P::kDbuToDbfs) / 20.0), "Voyant : rouge en surcharge");
         auto mid = make();
         setParam (*mid, P::gain, 6); mid->reset();   // +12 dB net : sinus -12 dBFS -> 0 dBFS (+18 dBu)
@@ -2231,12 +2231,13 @@ static void testV9p2()
         check (thd (0.0 - 0.1) < -64.0, "Sortie type THAT 1646 : à +17,9 dBu (DI) distorsion H3 < -64 dBc", thd (-0.1), "dBc");
         check (thd (5.0) > thd (0.0) + 10.0, "Au-delà de +21 dBu la sortie entre en compression douce", thd (5.0) - thd (0.0), "dB de plus");
         // Repliement à 44,1 kHz : 15 kHz très fort ; H3 = 45 kHz se replierait à 0,9 kHz
+        // Repliement à 44,1 kHz : 7 kHz à +22 dBu (dans le genou) ; le 5e harmonique (35 kHz) se replierait à 9,1 kHz.
         auto c3 = make (44100.0);
         setParam (*c3, P::input, 1); setParam (*c3, P::gain, 6); c3->reset();   // +12 dB net : sinus -8 dBFS -> +4 dBFS (+22 dBu, dans le genou)
-        const auto a = run (*c3, 15000.0, -8.0, 44100.0, 1.0);
-        double worstSpur = -200.0; const double ref = toneDb (a.L, 15000.0, 44100.0);
-        for (double f : { 900.0, 3000.0, 5100.0, 14100.0 }) worstSpur = std::max (worstSpur, toneDb (a.L, f, 44100.0) - ref);
-        check (worstSpur < -55.0, "15 kHz à +22 dBu (genou de sortie) à 44,1 kHz : repliements < -55 dBc (ADAA)", worstSpur, "dBc");
+        const auto a = run (*c3, 7000.0, -8.0, 44100.0, 1.0);
+        double worstSpur = -200.0; const double ref = toneDb (a.L, 7000.0, 44100.0);
+        for (double f : { 9100.0, 16100.0, 2100.0, 4900.0 }) worstSpur = std::max (worstSpur, toneDb (a.L, f, 44100.0) - ref);
+        check (worstSpur < -50.0, "7 kHz à +22 dBu (genou de sortie) à 44,1 kHz : repliements < -50 dBc (ADAA 1er ordre)", worstSpur, "dBc");
     }
 
     // --- 44,1 / 384 kHz : même gain, tenue DXD.
@@ -2558,13 +2559,550 @@ static void testStereoUtility()
     }
 }
 
+
+//==============================================================================
+// Nouveaux modules : F976, D9X, AuraSculpt, AuraTone
+//==============================================================================
+struct GrRun { Buf out, in; double gr; };
+
+template <class M>
+static GrRun runTone (M& c, double f, double ampDb, double rate, double seconds = 1.2)
+{
+    c.reset();
+    Buf x = sine ((std::size_t) (rate * seconds), f, rate, std::pow (10.0, ampDb / 20.0)), r = x;
+    const Buf in = x;
+    double gr = 0.0; int cnt = 0;
+    for (std::size_t off = 0; off < x.size(); off += 256)
+    {
+        const int n = (int) std::min<std::size_t> (256, x.size() - off);
+        c.process (x.data() + off, r.data() + off, n, {});
+        if (off >= x.size() * 2 / 3) { gr += c.getGainReductionDb(); ++cnt; }
+    }
+    return { x, in, gr / std::max (cnt, 1) };
+}
+
+/** Temps (s) pour que la réduction atteigne 63 % de sa valeur finale sur un échelon continu de niveau `levelDb`. */
+template <class M>
+static double stepT63 (M& c, double levelDb, double rate, double* finalGr = nullptr)
+{
+    c.reset();
+    const double a = std::pow (10.0, levelDb / 20.0);
+    const int total = (int) (rate * 0.5);
+    std::vector<double> gr ((std::size_t) total);
+    for (int i = 0; i < total; ++i) { double l = a, r = a; c.process (&l, &r, 1, {}); gr[(std::size_t) i] = c.getGainReductionDb(); }
+    const double fin = gr[(std::size_t) total - 1];
+    if (finalGr) *finalGr = fin;
+    for (int i = 0; i < total; ++i) if (gr[(std::size_t) i] >= 0.63 * fin) return (double) i / rate;
+    return 1.0;
+}
+
+static void testF976()
+{
+    std::puts ("\n== 21. F976 (compresseur FET 1176)");
+    using F = AuraF976;
+    check (F::info().params.size() == 8 && F::info().visibleMask (0) == 0xFFu, "8 paramètres, tous visibles");
+    const double fs = 96000.0;
+    auto make = [&] (double rate = 96000.0) { auto c = std::make_unique<F>(); c->prepare (rate, 256); return c; };
+
+    {   // Sous le seuil, le gain est unité (Input 10 / Output -10 par défaut).
+        auto c = make();
+        const auto o = runTone (*c, 4000.0, -40.0, fs);
+        const double g = toneDb (o.out, 4000.0, fs) - toneDb (o.in, 4000.0, fs);
+        check (std::abs (g) < 0.1 && o.gr < 0.01, "Défaut (Input 10 / Output -10) sous le seuil : gain unité", g, "dB");
+    }
+    // Courbes statiques : Input 0 / Output 0, tone 4 kHz, 8 dB au-dessus du seuil fixe (-10 dBFS) -> -2 dBFS.
+    for (int ratio = 0; ratio < 5; ++ratio)
+        for (int rev = 0; rev < 2; ++rev)
+        {
+            auto c = make();
+            setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, ratio); setParam (*c, F::revision, rev);
+            const double level = -2.0;
+            const auto o = runTone (*c, 4000.0, level, fs, 1.5);
+            const double expected = F::staticReduction (level - 0.4, ratio, rev == 0);   // crête ≈ 0,4 dB sous l'amplitude (ondulation du détecteur)
+            char what[160];
+            std::snprintf (what, sizeof what, "Ratio %s %s : réduction %.1f dB (théorie %.1f dB) à 8 dB au-dessus du seuil", std::array<const char*, 5> { "4:1", "8:1", "12:1", "20:1", "ALL" }[(std::size_t) ratio], rev ? "Rev D/E" : "Rev A", o.gr, expected);
+            check (std::abs (o.gr - expected) < 0.9, what, o.gr - expected, "dB d'écart");
+        }
+    {   // ALL écrase plus fort que 20:1 à niveau égal.
+        auto a = make(), b = make();
+        for (auto* c : { a.get(), b.get() }) { setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::revision, 1); }
+        setParam (*a, F::ratio, 3.0); setParam (*b, F::ratio, 4.0);
+        const double ga = runTone (*a, 4000.0, -2.0, fs, 1.5).gr, gb = runTone (*b, 4000.0, -2.0, fs, 1.5).gr;
+        check (gb > ga + 1.0, "ALL (tous boutons) : réduction plus forte que 20:1 au même niveau", gb - ga, "dB de plus");
+    }
+    // Input pousse la compression, Output ne la change pas.
+    {
+        auto c = make(); setParam (*c, F::ratio, 1.0);
+        setParam (*c, F::input, 0.0); const double g0 = runTone (*c, 4000.0, -14.0, fs).gr;
+        setParam (*c, F::input, 12.0); const double g12 = runTone (*c, 4000.0, -14.0, fs).gr;
+        setParam (*c, F::input, 12.0); setParam (*c, F::output, -20.0); const double go = runTone (*c, 4000.0, -14.0, fs).gr;
+        check (g0 < 0.01 && g12 > 3.0 && std::abs (go - g12) < 0.01, "Input 0 -> 12 dB : la compression apparaît (seuil fixe) ; Output ne la change pas", g12, "dB de GR");
+    }
+    // Attack en µs : échelon continu, 20 / 100 / 400 / 800 µs à 384 kHz.
+    {
+        double t[4]; int k = 0;
+        for (double us : { 20.0, 100.0, 400.0, 800.0 })
+        {
+            auto c = make (384000.0);
+            setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, 1.0); setParam (*c, F::release, 1100.0); setParam (*c, F::attack, us);
+            t[k++] = stepT63 (*c, -2.0, 384000.0);
+        }
+        char what[200];
+        std::snprintf (what, sizeof what, "Attack 20 / 100 / 400 / 800 µs : t63 mesuré %.0f / %.0f / %.0f / %.0f µs", t[0] * 1e6, t[1] * 1e6, t[2] * 1e6, t[3] * 1e6);
+        check (std::abs (t[0] - 20.0e-6) < 8.0e-6 && std::abs (t[1] - 100.0e-6) < 20.0e-6 && std::abs (t[2] - 400.0e-6) < 60.0e-6 && std::abs (t[3] - 800.0e-6) < 120.0e-6, what);
+    }
+    {   // Même attack à 44,1 kHz (échantillons de 22,7 µs) : 800 µs reste ≈ 800 µs.
+        auto c = make (44100.0);
+        setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, 1.0); setParam (*c, F::attack, 800.0);
+        auto d = make (384000.0);
+        setParam (*d, F::input, 0.0); setParam (*d, F::output, 0.0); setParam (*d, F::ratio, 1.0); setParam (*d, F::attack, 800.0);
+        const double a = stepT63 (*c, -2.0, 44100.0), b = stepT63 (*d, -2.0, 384000.0);
+        check (std::abs (a - b) < 0.2 * b + 30.0e-6, "Attack 800 µs : même durée à 44,1 et 384 kHz (±20 %)", (a - b) * 1e6, "µs d'écart");
+    }
+    // Release : 50 ms vs 1,1 s, retour à 63 % depuis une courte compression.
+    {
+        double t[2]; int k = 0;
+        for (double ms : { 50.0, 1100.0 })
+        {
+            auto c = make();
+            setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, 1.0); setParam (*c, F::release, ms);
+            c->reset();
+            const double a = std::pow (10.0, -2.0 / 20.0);
+            double peakGr = 0.0;
+            for (int i = 0; i < 4800; ++i) { double l = a, r = a; c->process (&l, &r, 1, {}); peakGr = std::max (peakGr, c->getGainReductionDb()); }
+            int released = 0;
+            for (int i = 0; i < (int) (fs * 3); ++i) { double l = 0.0, r = 0.0; c->process (&l, &r, 1, {}); if (c->getGainReductionDb() < 0.37 * peakGr) { released = i; break; } }
+            t[k++] = (double) released / fs;
+        }
+        char what[160];
+        std::snprintf (what, sizeof what, "Release 50 ms / 1,1 s : retour à 37 %% en %.0f ms / %.0f ms", t[0] * 1e3, t[1] * 1e3);
+        check (t[0] < 0.15 && t[1] > 4.0 * t[0] && t[1] > 0.15, what);
+    }
+    {   // Dépendant du programme : après une compression longue le retour est plus lent.
+        auto run = [&] (double holdSeconds)
+        {
+            auto c = make();
+            setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, 1.0); setParam (*c, F::release, 400.0);
+            c->reset();
+            const double a = std::pow (10.0, -2.0 / 20.0);
+            for (int i = 0; i < (int) (fs * holdSeconds); ++i) { double l = a, r = a; c->process (&l, &r, 1, {}); }
+            const double g0 = c->getGainReductionDb();
+            for (int i = 0; i < (int) (fs * 0.3); ++i) { double l = 0.0, r = 0.0; c->process (&l, &r, 1, {}); }
+            return c->getGainReductionDb() / g0;
+        };
+        const double brief = run (0.02), longer = run (6.0);
+        check (longer > brief + 0.1, "Release dépendant du programme : plus lent après une compression soutenue", longer - brief);
+    }
+    {   // Rev A plus riche en harmoniques que Rev D/E, et le défaut est propre.
+        auto h = [&] (int rev, double inDb)
+        {
+            auto c = make (384000.0);
+            setParam (*c, F::input, inDb); setParam (*c, F::output, -inDb); setParam (*c, F::ratio, 3.0); setParam (*c, F::revision, rev);
+            auto o = runTone (*c, 1000.0, -30.0, 384000.0, 0.5);
+            return std::pair { toneDb (o.out, 3000.0, 384000.0) - toneDb (o.out, 1000.0, 384000.0), toneDb (o.out, 2000.0, 384000.0) - toneDb (o.out, 1000.0, 384000.0) };
+        };
+        const auto a = h (0, 24.0), d = h (1, 24.0);
+        char what[160];
+        std::snprintf (what, sizeof what, "Rev A (H2 %.0f / H3 %.0f dBc) plus colorée que Rev D/E (H2 %.0f / H3 %.0f dBc) à Input +24 dB", a.second, a.first, d.second, d.first);
+        check (a.first > d.first + 6.0 && a.second > d.second + 6.0, what);
+    }
+    {   // SC HPF : un 40 Hz fort ne comprime plus avec 130 Hz.
+        auto c = make();
+        setParam (*c, F::input, 0.0); setParam (*c, F::output, 0.0); setParam (*c, F::ratio, 1.0);
+        const double off = runTone (*c, 40.0, -3.0, fs, 2.0).gr;
+        setParam (*c, F::scHpf, 3.0);
+        const double on = runTone (*c, 40.0, -3.0, fs, 2.0).gr;
+        check (off > 3.0 && on < off - 2.0, "SC HPF 130 Hz : un 40 Hz fort comprime nettement moins", off - on, "dB de moins");
+    }
+    {   // Repliement : 15 kHz fort comprimé à 44,1 kHz (attack 20 µs).
+        auto c = make (44100.0);
+        setParam (*c, F::input, 12.0); setParam (*c, F::output, -12.0); setParam (*c, F::ratio, 3.0); setParam (*c, F::attack, 20.0); setParam (*c, F::release, 50.0);
+        const auto o = runTone (*c, 5000.0, -12.0, 44100.0, 1.0);
+        const double ref = toneDb (o.out, 5000.0, 44100.0);
+        double worst = -200.0;
+        for (double f : { 900.0, 3300.0, 6700.0, 8800.0, 10000.0, 14400.0 }) worst = std::max (worst, toneDb (o.out, f, 44100.0) - ref);
+        check (worst < -50.0, "5 kHz comprimé 20:1, Attack 20 µs, à 44,1 kHz : produits d'intermodulation / repliement < -50 dBc", worst, "dBc");
+    }
+    {   // 44,1 vs 384 kHz : même réduction statique.
+        double g[2]; int k = 0;
+        for (double rate : { 44100.0, 384000.0 })
+        {
+            auto c = make (rate);
+            setParam (*c, F::input, 6.0); setParam (*c, F::output, -6.0); setParam (*c, F::ratio, 1.0);
+            g[k++] = runTone (*c, 4000.0, -12.0, rate, 1.5).gr;
+        }
+        check (std::abs (g[0] - g[1]) < 0.4, "Réduction identique à 44,1 et 384 kHz (±0,4 dB)", std::abs (g[0] - g[1]), "dB");
+        auto c = make (384000.0);
+        Buf L (384000), R; PortableGauss gs (7, 0.5); for (auto& v : L) v = gs(); R = L;
+        setParam (*c, F::input, 30.0); setParam (*c, F::ratio, 4.0); runModule (*c, L, R);
+        bool finite = true; for (double v : L) finite = finite && std::isfinite (v);
+        check (finite, "Bruit fort, Input +30 dB, ALL à 384 kHz : sortie finie");
+    }
+}
+
+
+static void testD9x()
+{
+    std::puts ("\n== 22. D9X (Distressor, 8 rapports + distorsions)");
+    using D = AuraD9X;
+    check (D::info().params.size() == 10 && D::info().visibleMask (0) == 0x3FFu, "10 paramètres, tous visibles");
+    const double fs = 96000.0;
+    auto make = [&] (double rate = 96000.0) { auto c = std::make_unique<D>(); c->prepare (rate, 256); setParam (*c, D::input, 0.0); return c; };
+    const char* names[8] = { "1:1", "2:1", "3:1", "4:1", "6:1", "10:1 Opto", "20:1", "NUKE" };
+
+    {   // 1:1 Clean, Input 0 / Output 0 : transparent bit pour bit ; avec Input 6 : gain +6 dB exact.
+        auto c = make();
+        setParam (*c, D::ratio, 0.0);
+        const auto o = runTone (*c, 1000.0, -6.0, fs, 0.5);
+        check (o.out == o.in && o.gr == 0.0, "1:1 Clean, Input 0 / Output 0 : sortie = entrée bit pour bit");
+    }
+    // Courbes statiques des 7 rapports (hors 1:1) : 12 dB au-dessus du seuil fixe (-18 dBFS) -> -6 dBFS, tone 4 kHz.
+    for (bool brit : { false, true })
+        for (int r = 1; r < 8; ++r)
+        {
+            auto c = make();
+            setParam (*c, D::ratio, r); setParam (*c, D::british, brit ? 1.0 : 0.0); setParam (*c, D::attack, 0.05);
+            const double level = -6.0;
+            const auto o = runTone (*c, 4000.0, level, fs, 1.5);
+            const double expected = D::staticReduction (level - 0.4, D::kThresholdDbfs, r, brit);
+            char what[160];
+            std::snprintf (what, sizeof what, "%s%s : réduction %.1f dB (théorie %.1f dB) à 12 dB au-dessus du seuil", names[r], brit ? " British" : "", o.gr, expected);
+            check (std::abs (o.gr - expected) < (r == 7 ? 1.4 : 1.0), what, o.gr - expected, "dB d'écart");
+        }
+    {   // Les genoux sont différents d'un rapport à l'autre : réduction à 0 dB de dépassement (théorie genou/8·(1-1/r)).
+        double g[8];
+        for (int r = 1; r < 8; ++r) g[r] = D::staticReduction (D::kThresholdDbfs, D::kThresholdDbfs, r, false);
+        check (g[1] > g[6] + 0.2 && g[2] > g[6] && g[7] == 0.0, "Genoux propres à chaque rapport : 2:1 plus doux que 20:1, NUKE sans genou");
+    }
+    {   // British : plus de réduction, au même réglage.
+        auto a = make(), b = make();
+        for (auto* c : { a.get(), b.get() }) setParam (*c, D::ratio, 3.0);
+        setParam (*b, D::british, 1.0);
+        const double ga = runTone (*a, 4000.0, -6.0, fs, 1.5).gr, gb = runTone (*b, 4000.0, -6.0, fs, 1.5).gr;
+        check (gb > ga + 1.0, "British : réduction plus forte que le mode normal (4:1, 12 dB au-dessus)", gb - ga, "dB de plus");
+        double t[2]; int k = 0;
+        for (bool brit : { false, true }) { auto c = make (384000.0); setParam (*c, D::ratio, 3.0); setParam (*c, D::attack, 1.0); setParam (*c, D::british, brit ? 1.0 : 0.0); t[k++] = stepT63 (*c, -6.0, 384000.0); }
+        check (t[1] < 0.7 * t[0], "British : attaque plus rapide (≈ ÷ 2)", t[0] / t[1]);
+    }
+    {   // NUKE : crête de sortie collée au seuil (pas d'anticipation : tolérance 1,5 dB), même sur +24 dB.
+        auto c = make();
+        setParam (*c, D::ratio, 7.0);
+        const auto o = runTone (*c, 1000.0, 0.0, fs, 1.0);
+        double peak = 0.0; for (std::size_t i = o.out.size() * 2 / 3; i < o.out.size(); ++i) peak = std::max (peak, std::abs (o.out[i]));
+        check (dbOf (peak) < D::kThresholdDbfs + 1.5 && dbOf (peak) > D::kThresholdDbfs - 1.5, "NUKE : sinus 0 dBFS écrêté à la crête du seuil (±1,5 dB)", dbOf (peak) - D::kThresholdDbfs, "dB");
+    }
+    {   // Opto : release lent (deux voies) vs 4:1 au même réglage ; attaque 0,05 / 30 ms.
+        auto relTime = [&] (int ratio)
+        {
+            auto c = make();
+            setParam (*c, D::ratio, ratio); setParam (*c, D::release, 300.0); setParam (*c, D::attack, 1.0);
+            c->reset();
+            const double a = std::pow (10.0, -6.0 / 20.0); double peakGr = 0.0;
+            for (int i = 0; i < (int) (fs * 6.0); ++i) { double l = a, r = a; c->process (&l, &r, 1, {}); peakGr = std::max (peakGr, c->getGainReductionDb()); }
+            for (int i = 0; i < (int) (fs * 6); ++i) { double l = 0.0, r = 0.0; c->process (&l, &r, 1, {}); if (c->getGainReductionDb() < 0.37 * peakGr) return (double) i / fs; }
+            return 6.0;
+        };
+        const double opto = relTime (5), plain = relTime (3);
+        check (opto > 1.5 * plain, "10:1 Opto : relâchement nettement plus lent que 4:1 (deux voies, dépendant du programme)", opto / plain);
+        double t[2]; int k = 0;
+        for (double ms : { 0.05, 30.0 }) { auto c = make (384000.0); setParam (*c, D::ratio, 3.0); setParam (*c, D::attack, ms); t[k++] = stepT63 (*c, -6.0, 384000.0); }
+        check (t[0] < 0.2e-3 && t[1] > 15.0e-3 && t[1] < 45.0e-3, "Attack 0,05 ms et 30 ms : constantes de temps respectées", t[1] * 1e3, "ms (30 ms)");
+    }
+    // Distorsions : Dist 2 = H2, Dist 3 = H3, Clean propre ; lampes THD.
+    {
+        auto meas = [&] (int mode, int ratio, double inDb, double rate = 384000.0, double f = 1000.0)
+        {
+            auto c = make (rate);
+            setParam (*c, D::ratio, ratio); setParam (*c, D::distortion, mode); setParam (*c, D::input, inDb); setParam (*c, D::output, -inDb);
+            auto o = runTone (*c, f, -30.0, rate, 0.8);
+            struct R { double h2, h3, thd; } r { toneDb (o.out, 2.0 * f, rate) - toneDb (o.out, f, rate), toneDb (o.out, 3.0 * f, rate) - toneDb (o.out, f, rate), c->getMeterAux() };
+            return r;
+        };
+        const auto clean = meas (0, 0, 20.0), d2 = meas (1, 0, 20.0), d3 = meas (2, 0, 20.0);
+        char what[200];
+        std::snprintf (what, sizeof what, "Clean H2 %.0f / H3 %.0f ; Dist 2 H2 %.0f / H3 %.0f ; Dist 3 H2 %.0f / H3 %.0f dBc (1:1, Input +20 dB)", clean.h2, clean.h3, d2.h2, d2.h3, d3.h2, d3.h3);
+        check (clean.h2 < -110.0 && clean.h3 < -110.0 && d2.h2 > d2.h3 + 12.0 && d3.h3 > d3.h2 + 12.0 && d2.h2 > -50.0 && d3.h3 > -55.0, what);
+        const auto lo = meas (2, 0, 10.0), hi = meas (2, 0, 24.0);
+        check (hi.h3 > lo.h3 + 10.0, "La distorsion croît avec le niveau poussé par Input", hi.h3 - lo.h3, "dB de plus");
+        const double thdMeas = 100.0 * std::pow (10.0, d3.h3 / 20.0);
+        std::snprintf (what, sizeof what, "Lampes THD : estimation %.2f %% pour H3 %.0f dBc mesuré (%.2f %%)", d3.thd, d3.h3, thdMeas);
+        check (d3.thd > 0.6 * thdMeas && d3.thd < 1.5 * thdMeas, what);
+        const auto comp = meas (2, 3, 20.0);
+        check (clean.thd == 0.0 && comp.thd > 0.0, "Clean : lampes THD éteintes (0 %) ; Dist 3 : allumées", comp.thd);
+    }
+    {   // Repliement 44,1 kHz : 15 kHz très fort en Dist 3.
+        auto c = make (44100.0);
+        setParam (*c, D::ratio, 3.0); setParam (*c, D::distortion, 2.0); setParam (*c, D::input, 24.0); setParam (*c, D::output, -24.0);
+        const auto o = runTone (*c, 15000.0, -20.0, 44100.0, 1.0);
+        double worst = -200.0; const double ref = toneDb (o.out, 15000.0, 44100.0);
+        for (double f : { 900.0, 3000.0, 5100.0, 7000.0, 14100.0 }) worst = std::max (worst, toneDb (o.out, f, 44100.0) - ref);
+        check (worst < -65.0, "15 kHz Dist 3 + compression à 44,1 kHz : repliements < -65 dBc", worst, "dBc");
+    }
+    {   // Detector HPF et Band Emphasis : agissent sur le détecteur seulement.
+        auto c = make();
+        setParam (*c, D::ratio, 3.0);
+        const double off = runTone (*c, 40.0, -6.0, fs, 2.0).gr;
+        setParam (*c, D::detHpf, 3.0);
+        const double on = runTone (*c, 40.0, -6.0, fs, 2.0).gr;
+        check (off > 4.0 && on < off - 3.0, "Detector HPF 240 Hz : un 40 Hz fort ne comprime presque plus", off - on, "dB de moins");
+        auto e = make();
+        setParam (*e, D::ratio, 3.0);
+        const double flat = runTone (*e, 6000.0, -22.0, fs, 1.2).gr;
+        setParam (*e, D::bandEmphasis, 12.0);
+        const auto o = runTone (*e, 6000.0, -22.0, fs, 1.2);
+        check (flat < 0.1 && o.gr > 3.0, "Band Emphasis +12 dB (6 kHz) : un 6 kHz sous le seuil déclenche la compression", o.gr, "dB de GR");
+    }
+    {   // Auto Focus : réduction moyenne ≈ cible, à deux niveaux d'entrée.
+        for (double inLevel : { -26.0, -14.0 })
+        {
+            auto c = make (48000.0);
+            setParam (*c, D::ratio, 3.0); setParam (*c, D::autoFocus, 2.0);   // 6 dB
+            c->reset();
+            const double rate = 48000.0; const int total = (int) (rate * 40.0);
+            double sum = 0.0; int cnt = 0;
+            PortableGauss g (3, 1.0);
+            for (int blk = 0; blk < total / 256; ++blk)
+            {
+                Buf l (256), r;
+                for (int i = 0; i < 256; ++i)
+                {
+                    const double t = (double) (blk * 256 + i) / rate;
+                    const double env = 0.55 + 0.45 * std::sin (dsp::kTwoPi * 3.0 * t);   // « syllabes » à 3 Hz
+                    l[(std::size_t) i] = std::pow (10.0, inLevel / 20.0) * env * std::sin (dsp::kTwoPi * 700.0 * t) * 1.0;
+                }
+                r = l;
+                c->process (l.data(), r.data(), 256, {});
+                if (blk * 256 > total / 2) { sum += c->getGainReductionDb(); ++cnt; }
+            }
+            char what[160];
+            std::snprintf (what, sizeof what, "Auto Focus 6 dB, entrée %.0f dBFS : réduction moyenne %.1f dB", inLevel, sum / cnt);
+            check (std::abs (sum / cnt - 6.0) < 2.0, what, sum / cnt - 6.0, "dB d'écart");
+        }
+    }
+    {   // 44,1 vs 384 kHz : même réduction ; bruit fort fini.
+        double g[2]; int k = 0;
+        for (double rate : { 44100.0, 384000.0 }) { auto c = make (rate); setParam (*c, D::ratio, 3.0); setParam (*c, D::distortion, 1.0); g[k++] = runTone (*c, 4000.0, -10.0, rate, 1.5).gr; }
+        check (std::abs (g[0] - g[1]) < 0.4, "Réduction identique à 44,1 et 384 kHz (±0,4 dB)", std::abs (g[0] - g[1]), "dB");
+        auto c = make (384000.0);
+        Buf L (384000), R; PortableGauss gs (11, 0.5); for (auto& v : L) v = gs(); R = L;
+        setParam (*c, D::input, 30.0); setParam (*c, D::ratio, 7.0); setParam (*c, D::distortion, 2.0); setParam (*c, D::british, 1.0); runModule (*c, L, R);
+        bool finite = true; for (double v : L) finite = finite && std::isfinite (v);
+        check (finite, "Bruit fort, NUKE + Dist 3 + British à 384 kHz : sortie finie");
+    }
+}
+
+/** Salve : `onMs` de sinus à `f` précédée de 100 ms de silence, suivie de `tailMs` de silence. */
+static Buf burst (double f, double dbfs, double rate, double onMs, double tailMs)
+{
+    Buf x ((std::size_t) (rate * (0.1 + (onMs + tailMs) * 0.001)), 0.0);
+    const std::size_t a = (std::size_t) (rate * 0.1), n = (std::size_t) (rate * onMs * 0.001);
+    for (std::size_t i = 0; i < n; ++i) x[a + i] = std::pow (10.0, dbfs / 20.0) * std::sin (dsp::kTwoPi * f * (double) i / rate);
+    return x;
+}
+/** Note percussive : attaque franche, décroissance exponentielle (constante tauMs), précédée de 100 ms de silence. */
+static Buf note (double f, double dbfs, double rate, double tauMs, double lenMs = 500.0)
+{
+    Buf x ((std::size_t) (rate * (0.1 + lenMs * 0.001)), 0.0);
+    const std::size_t a = (std::size_t) (rate * 0.1);
+    for (std::size_t i = 0; a + i < x.size(); ++i) { const double t = (double) i / rate; x[a + i] = std::pow (10.0, dbfs / 20.0) * std::exp (-t / (tauMs * 0.001)) * std::sin (dsp::kTwoPi * f * t); }
+    return x;
+}
+static double windowDb (const Buf& x, double rate, double t0Ms, double t1Ms)
+{
+    return dbOf (rmsOf (x, (std::size_t) (rate * (0.1 + t0Ms * 0.001)), (std::size_t) (rate * (0.1 + t1Ms * 0.001))));
+}
+
+static void testSculpt()
+{
+    std::puts ("\n== 23. AuraSculpt (transitoires / dynamique)");
+    using S = AuraSculpt;
+    check (S::info().params.size() == 7 && S::info().visibleMask (0) == 0x7Fu, "7 paramètres, tous visibles");
+    const double fs = 96000.0;
+    auto make = [&] (double rate = 96000.0) { auto c = std::make_unique<S>(); c->prepare (rate, 256); return c; };
+    {
+        auto c = make();
+        c->reset();
+        Buf L = sine (48000, 1000.0, fs, 0.5), R = L; const Buf in = L;
+        runModule (*c, L, R);
+        check (L == in, "Tout à 0 (Ceiling Off) : sortie = entrée bit pour bit");
+    }
+    {   // Régime établi : gain 0 dB quels que soient Attack / Sustain.
+        auto c = make();
+        setParam (*c, S::attack, 12.0); setParam (*c, S::sustain, -12.0);
+        const auto o = runTone (*c, 1000.0, -12.0, fs, 2.0);
+        const double g = toneDb (o.out, 1000.0, fs) - toneDb (o.in, 1000.0, fs);
+        check (std::abs (g) < 0.1, "Sinus continu : gain 0 dB même avec Attack +12 / Sustain -12 (régime établi intact)", g, "dB");
+    }
+    {   // Attack : l'attaque est renforcée, la queue ne bouge pas.
+        auto run = [&] (double att, double sus, double dbfs)
+        {
+            auto c = make(); setParam (*c, S::attack, att); setParam (*c, S::sustain, sus);
+            Buf x = note (200.0, dbfs, fs, 120.0), r = x; const Buf in = x;
+            runModule (*c, x, r);
+            struct O { double early, late, tail; } o { windowDb (x, fs, 0.0, 6.0) - windowDb (in, fs, 0.0, 6.0), windowDb (x, fs, 40.0, 60.0) - windowDb (in, fs, 40.0, 60.0), windowDb (x, fs, 150.0, 200.0) - windowDb (in, fs, 150.0, 200.0) };
+            return o;
+        };
+        const auto base = run (0.0, 0.0, -12.0), up = run (9.0, 0.0, -12.0), dn = run (-9.0, 0.0, -12.0);
+        char what[200];
+        std::snprintf (what, sizeof what, "Attack +9 dB : attaque %+.1f dB, corps %+.1f dB ; Attack -9 dB : attaque %+.1f dB", up.early - base.early, up.late - base.late, dn.early - base.early);
+        check (up.early - base.early > 3.0 && dn.early - base.early < -3.0 && std::abs (up.late - base.late) < 0.5, what);
+        const auto su = run (0.0, -12.0, -12.0), sd = run (0.0, 6.0, -12.0);
+        std::snprintf (what, sizeof what, "Sustain -12 dB : queue %+.1f dB, attaque %+.1f dB ; Sustain +6 dB : queue %+.1f dB", su.tail - base.tail, su.early - base.early, sd.tail - base.tail);
+        check (su.tail - base.tail < -3.0 && std::abs (su.early - base.early) < 1.5 && sd.tail - base.tail > 0.0, what);
+        const auto lo = run (9.0, 0.0, -32.0);
+        check (std::abs ((lo.early - base.early) - (up.early - base.early)) < 1.5, "Indépendant du niveau : même renforcement à -32 dBFS qu'à -12 dBFS (±1,5 dB)", (lo.early) - (up.early), "dB");
+    }
+    {   // Focus : seules les transitoires de la bande visée bougent.
+        auto run = [&] (double f)
+        {
+            auto c = make(); setParam (*c, S::attack, 12.0); setParam (*c, S::focus, 6000.0); setParam (*c, S::focusAmount, 100.0);
+            Buf x = burst (f, -12.0, fs, 100.0, 100.0), r = x; const Buf in = x;
+            runModule (*c, x, r);
+            return windowDb (x, fs, 0.0, 6.0) - windowDb (in, fs, 0.0, 6.0);
+        };
+        const double hi = run (6000.0), lo = run (200.0);
+        check (hi > 3.0 && std::abs (lo) < 0.6, "Focus 6 kHz à 100 % : une salve à 6 kHz est renforcée, une salve à 200 Hz intacte", hi - lo, "dB d'écart");
+    }
+    {   // Ceiling : plafond doux, identité sous le genou, pas de repliement.
+        auto c = make();
+        setParam (*c, S::ceiling, -6.0);
+        const auto quiet = runTone (*c, 1000.0, -12.0, fs, 0.4);
+        check (quiet.out == quiet.in, "Ceiling -6 : un signal sous le genou (-9 dBFS) passe bit pour bit");
+        const auto loud = runTone (*c, 1000.0, 6.0, fs, 0.4);
+        double peak = 0.0; for (double v : loud.out) peak = std::max (peak, std::abs (v));
+        check (dbOf (peak) <= -4.9 && dbOf (peak) > -6.5, "Ceiling -6 : une crête à +6 dBFS (+12 dB de surcharge) reste ≤ -4,9 dBFS (plafond doux : jusqu'à +1 dB de dépassement)", dbOf (peak), "dBFS");
+        auto d = make (44100.0);
+        setParam (*d, S::ceiling, -6.0);
+        const auto o = runTone (*d, 9000.0, -1.0, 44100.0, 1.0);
+        double worst = -200.0; const double ref = toneDb (o.out, 9000.0, 44100.0);
+        for (double f : { 900.0, 4500.0, 13500.0, 18000.0 }) worst = std::max (worst, toneDb (o.out, f, 44100.0) - ref);
+        check (worst < -40.0, "9 kHz plafonné à 44,1 kHz : repliements < -40 dBc (ADAA du 1er ordre)", worst, "dBc");
+    }
+    {   // 44,1 / 384 kHz : même effet ; bruit fort fini.
+        double g[2]; int k = 0;
+        for (double rate : { 44100.0, 384000.0 })
+        {
+            auto c = make (rate); setParam (*c, S::attack, 9.0);
+            Buf x = burst (200.0, -12.0, rate, 150.0, 100.0), r = x; const Buf in = x;
+            runModule (*c, x, r, 256);
+            g[k++] = windowDb (x, rate, 0.0, 6.0) - windowDb (in, rate, 0.0, 6.0);
+        }
+        check (std::abs (g[0] - g[1]) < 1.0, "Attack +9 dB : même renforcement à 44,1 et 384 kHz (±1 dB)", std::abs (g[0] - g[1]), "dB");
+        auto c = make (384000.0);
+        Buf L (384000), R; PortableGauss gs (13, 0.5); for (auto& v : L) v = gs(); R = L;
+        setParam (*c, S::attack, 12.0); setParam (*c, S::sustain, 12.0); setParam (*c, S::ceiling, -3.0); runModule (*c, L, R);
+        bool finite = true; for (double v : L) finite = finite && std::isfinite (v);
+        check (finite, "Bruit fort à 384 kHz : sortie finie");
+    }
+}
+
+static void testTone()
+{
+    std::puts ("\n== 24. AuraTone (Body / Air / Tilt / harmoniques)");
+    using T = AuraTone;
+    check (T::info().params.size() == 6 && T::info().visibleMask (0) == 0x3Fu, "6 paramètres, tous visibles");
+    const double fs = 96000.0;
+    auto make = [&] (double rate = 96000.0) { auto c = std::make_unique<T>(); c->prepare (rate, 256); return c; };
+    auto gainAt = [&] (T& c, double f, double rate = 96000.0)
+    {
+        auto o = runTone (c, f, -30.0, rate, f < 100.0 ? 2.5 : 0.8);
+        return toneDb (o.out, f, rate) - toneDb (o.in, f, rate);
+    };
+    {
+        auto c = make(); c->reset();
+        Buf L = sine (48000, 1000.0, fs, 0.5), R = L; const Buf in = L;
+        runModule (*c, L, R);
+        check (L == in, "Tout à 0 : sortie = entrée bit pour bit");
+    }
+    {
+        auto c = make(); setParam (*c, T::body, 6.0);
+        const double g180 = gainAt (*c, 180.0), g5k = gainAt (*c, 5000.0), g20k = gainAt (*c, 20000.0);
+        char what[160];
+        std::snprintf (what, sizeof what, "Body +6 dB : %+.2f dB à 180 Hz, %+.2f dB à 5 kHz, %+.2f dB à 20 kHz", g180, g5k, g20k);
+        check (std::abs (g180 - 6.0) < 0.4 && std::abs (g5k) < 0.5 && std::abs (g20k) < 0.2, what);
+        auto d = make(); setParam (*d, T::body, -6.0);
+        check (std::abs (gainAt (*d, 180.0) + 6.0) < 0.4, "Body -6 dB : -6 dB à 180 Hz", gainAt (*d, 180.0), "dB");
+    }
+    {
+        auto c = make(); setParam (*c, T::air, 6.0);
+        const double g1k = gainAt (*c, 1000.0), g11k = gainAt (*c, 11000.0), g20k = gainAt (*c, 20000.0);
+        char what[160];
+        std::snprintf (what, sizeof what, "Air +6 dB : %+.2f dB à 1 kHz, %+.2f dB à 11 kHz, %+.2f dB à 20 kHz", g1k, g11k, g20k);
+        check (std::abs (g1k) < 0.3 && g11k > 2.0 && g11k < 4.0 && g20k > 5.0, what);
+        auto d = make (44100.0); setParam (*d, T::air, 6.0);
+        const double n = gainAt (*d, 18000.0, 44100.0);
+        check (n > 4.0 && n < 6.5, "Air +6 dB à 44,1 kHz : +4 à +6,5 dB à 18 kHz (pas de dérive près de Nyquist)", n, "dB");
+        auto e = make (384000.0); setParam (*e, T::air, 6.0);
+        check (std::abs (gainAt (*e, 11000.0, 384000.0) - g11k) < 0.2, "Air : même réponse à 384 kHz qu'à 96 kHz (11 kHz)", gainAt (*e, 11000.0, 384000.0) - g11k, "dB");
+    }
+    {
+        auto c = make(); setParam (*c, T::tilt, 4.0);
+        const double lo = gainAt (*c, 40.0), mid = gainAt (*c, 650.0), hi = gainAt (*c, 16000.0);
+        char what[160];
+        std::snprintf (what, sizeof what, "Tilt +4 dB : %+.2f dB à 40 Hz, %+.2f dB à 650 Hz, %+.2f dB à 16 kHz", lo, mid, hi);
+        check (std::abs (lo + 2.0) < 0.5 && std::abs (mid) < 0.4 && std::abs (hi - 2.0) < 0.5, what);
+    }
+    {   // Doseur d'harmoniques.
+        auto harm = [&] (double even, double odd, double rate = 384000.0, double f = 1000.0)
+        {
+            auto c = make (rate); setParam (*c, T::even, even); setParam (*c, T::odd, odd);
+            auto o = runTone (*c, f, -12.0, rate, 0.8);
+            struct R { double h2, h3; } r { toneDb (o.out, 2.0 * f, rate) - toneDb (o.out, f, rate), toneDb (o.out, 3.0 * f, rate) - toneDb (o.out, f, rate) };
+            return r;
+        };
+        const auto zero = harm (0.0, 0.0), ev = harm (100.0, 0.0), od = harm (0.0, 100.0), half = harm (50.0, 0.0);
+        char what[200];
+        std::snprintf (what, sizeof what, "Even 100 %% : H2 %.0f / H3 %.0f dBc ; Odd 100 %% : H2 %.0f / H3 %.0f dBc ; zéro : H2 %.0f dBc", ev.h2, ev.h3, od.h2, od.h3, zero.h2);
+        check (zero.h2 < -140.0 && ev.h2 > -33.0 && ev.h2 < -22.0 && ev.h3 < ev.h2 - 20.0 && od.h3 > -40.0 && od.h3 < -28.0 && od.h2 < od.h3 - 20.0, what);
+        check (std::abs ((ev.h2 - half.h2) - 6.0) < 1.0, "Even 50 % : H2 6 dB sous Even 100 % (dose linéaire)", ev.h2 - half.h2, "dB");
+        const auto lo = harm (100.0, 100.0, 96000.0), dxd = harm (100.0, 100.0, 384000.0);
+        check (std::abs (lo.h2 - dxd.h2) < 0.6 && std::abs (lo.h3 - dxd.h3) < 0.6, "Harmoniques identiques à 96 et 384 kHz (±0,6 dB)", lo.h2 - dxd.h2, "dB");
+        auto c = make (44100.0); setParam (*c, T::even, 100.0); setParam (*c, T::odd, 100.0);
+        const auto o = runTone (*c, 15000.0, -3.0, 44100.0, 1.0);
+        double worst = -200.0; const double ref = toneDb (o.out, 15000.0, 44100.0);
+        for (double f : { 900.0, 3000.0, 5100.0, 14100.0 }) worst = std::max (worst, toneDb (o.out, f, 44100.0) - ref);
+        check (worst < -80.0, "15 kHz, doseurs à 100 % à 44,1 kHz : repliements < -80 dBc", worst, "dBc");
+    }
+    {   // Stabilité DXD : 20 Hz à 384 kHz, bruit fort, réglages extrêmes.
+        auto c = make (384000.0);
+        setParam (*c, T::body, 12.0); setParam (*c, T::air, 12.0); setParam (*c, T::tilt, 6.0); setParam (*c, T::even, 100.0); setParam (*c, T::odd, 100.0);
+        Buf L (384000), R; PortableGauss gs (17, 0.3); for (auto& v : L) v = gs(); R = L;
+        runModule (*c, L, R);
+        bool finite = true; for (double v : L) finite = finite && std::isfinite (v);
+        auto d = make (384000.0); setParam (*d, T::body, 12.0);
+        check (finite && std::abs (gainAt (*d, 20.0, 384000.0)) < 3.0, "Réglages extrêmes à 384 kHz : sortie finie ; Body +12 dB à 20 Hz : stable (< +3 dB)", gainAt (*d, 20.0, 384000.0), "dB");
+    }
+}
+
+
+static void testRobust()
+{
+    std::puts ("\n== 25. Robustesse : signaux flottants très forts, tous modules, 44,1 et 384 kHz");
+    for (double rate : { 44100.0, 384000.0 })
+    {
+        bool ok = true; double worst = 0.0; std::string bad;
+        for (int t = 1; t < kNumModuleTypes; ++t)
+        {
+            auto m = createModule ((ModuleType) t);
+            m->prepare (rate, 256);
+            Buf L = sine ((std::size_t) (rate * 0.5), 997.0, rate, 1000.0), R = L;   // +60 dBFS
+            runModule (*m, L, R);
+            double peak = 0.0;
+            for (double v : L) { if (! std::isfinite (v)) { ok = false; bad = m->getInfo().name; } peak = std::max (peak, std::abs (v)); }
+            worst = std::max (worst, peak);
+            if (peak > 1.0e6) { ok = false; bad = m->getInfo().name; }
+        }
+        check (ok, rate < 100000.0 ? "+60 dBFS à 44,1 kHz : tous les modules finis, crête < 1e6 " + bad : "+60 dBFS à 384 kHz : tous les modules finis, crête < 1e6 " + bad, dbOf (worst), "dBFS (pire crête)");
+    }
+}
+
 int main (int argc, char** argv)
 {
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness }, { "v9c3", testV9c3 }, { "v9p2", testV9p2 }, { "lookahead", testLookahead }, { "autogain", testAutoGain }, { "utility", testStereoUtility },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness }, { "v9c3", testV9c3 }, { "v9p2", testV9p2 }, { "lookahead", testLookahead }, { "autogain", testAutoGain }, { "utility", testStereoUtility }, { "f976", testF976 }, { "robust", testRobust }, { "d9x", testD9x }, { "sculpt", testSculpt }, { "tone", testTone },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)

@@ -253,6 +253,24 @@ int main (int argc, char** argv)
             snapshot (v3, 1000, 385, "v9c3-wide.png");
             snapshot (v2, 1000, 385, "v9p2-wide.png");
             processor.setSlotModule (5, keep5); processor.setSlotModule (6, keep6);
+            const auto keep7 = processor.getSlotModule (7);
+            auto& ap = processor.getValueTreeState();
+            for (auto [t, file] : { std::pair { aura::ModuleType::f976, "f976-wide.png" }, std::pair { aura::ModuleType::d9x, "d9x-wide.png" },
+                                    std::pair { aura::ModuleType::sculpt, "sculpt-wide.png" }, std::pair { aura::ModuleType::tone, "tone-wide.png" } })
+            {
+                processor.setSlotModule (7, t);
+                if (t == aura::ModuleType::tone)
+                {
+                    ap.getParameter (aura::params::generic (7, aura::AuraTone::body))->setValueNotifyingHost (0.75f);
+                    ap.getParameter (aura::params::generic (7, aura::AuraTone::air))->setValueNotifyingHost (0.7f);
+                    ap.getParameter (aura::params::generic (7, aura::AuraTone::tilt))->setValueNotifyingHost (0.35f);
+                }
+                aura::ui::VertigoFaceplate f (t, ap, 7);
+                f.setBounds (0, 0, 1000, 385);
+                for (int i = 0; i < 120; ++i) f.tick (1.0f / 60.0f, { 8.0f, 0.0f, t == aura::ModuleType::f976 ? -16.0f : (t == aura::ModuleType::sculpt ? 5.0f : 2.0f) });
+                snapshot (f, 1000, 385, file);
+            }
+            processor.setSlotModule (7, keep7);
         }
         {
             auto u = processor.getUiSettings();
@@ -275,6 +293,7 @@ int main (int argc, char** argv)
                 std::vector<float> v;
                 for (int i = 0; i < aura::kMaxModuleParams; ++i) v.push_back (apvts.getParameter (aura::params::generic (slot, i))->getValue());
                 v.push_back (apvts.getParameter (aura::params::bypass (slot))->getValue());
+                v.push_back (apvts.getParameter (aura::params::mix (slot))->getValue());
                 return v;
             };
             std::set<int> claimed;
@@ -317,6 +336,16 @@ int main (int argc, char** argv)
         v3.setBounds (0, 0, 1000, 385); v2.setBounds (0, 0, 1000, 385);
         bindingCheck (v3, 5, 8, 3, "V9C3");
         bindingCheck (v2, 6, 5, 4, "V9P2");
+        {
+            struct N { aura::ModuleType t; int knobs, switches; const char* name; };
+            for (auto n : { N { aura::ModuleType::f976, 8, 2, "F976" }, N { aura::ModuleType::d9x, 10, 2, "D9X" }, N { aura::ModuleType::sculpt, 8, 1, "AuraSculpt" }, N { aura::ModuleType::tone, 7, 1, "AuraTone" } })
+            {
+                processor.setSlotModule (7, n.t);
+                aura::ui::VertigoFaceplate f (n.t, processor.getValueTreeState(), 7);
+                f.setBounds (0, 0, 1000, 385);
+                bindingCheck (f, 7, n.knobs, n.switches, n.name);
+            }
+        }
 
         // Auto Focus : en AUTO le potard Thresh n'est plus réglable (le moteur le pilote) ; en MANUAL il l'est de nouveau.
         auto& apvts = processor.getValueTreeState();

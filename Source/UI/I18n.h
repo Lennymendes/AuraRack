@@ -23,7 +23,7 @@ enum class Key : int
     sidechain, latency, chain, inspector,
     helpSettings, helpInfo, helpLufs, helpBypassTile, helpRemoveTile, helpEmptyTile,
     preset, presetEmpty, presetNone, presetModified, helpAb, helpCopy, helpPreset, autoGainRack, helpAutoGainRack, helpAutoGainSlot, stereoWidth, bassMono, mono, correlation, helpUtility, latencyTotal, samplesShort, helpLatency, helpCpu,
-    modNone, modEq, modComp, modDuck, modClip, modLimit, modDelay, modVerb, modW9b, modL9a, modE9ds, modV9c3, modV9p2,
+    modNone, modEq, modComp, modDuck, modClip, modLimit, modDelay, modVerb, modW9b, modL9a, modE9ds, modV9c3, modV9p2, modF976, modD9x, modSculpt, modTone,
     count
 };
 
@@ -89,6 +89,10 @@ inline constexpr std::array<std::array<const char*, (std::size_t) Lang::count>, 
     /* modE9ds      */ { "De-esser : ma\xc3\xaetrise la sibilance sans zozotement", "De-esser: tames sibilance without lisping" },
     /* modV9c3      */ { "Compresseur VCA quadruple : douceur et caract\xc3\xa8" "re, Auto Focus", "Quad-VCA compressor: smooth, characterful, Auto Focus" },
     /* modV9p2      */ { "Pr\xc3\xa9" "ampli double canal : transfo en entr\xc3\xa9" "e, gain par crans", "Dual-channel preamp: input transformer, stepped gain" },
+    /* modF976      */ { "Compresseur FET \xc3\xa0 contre-r\xc3\xa9" "action (esprit 1176) : Rev A / Rev D-E, attaque en \xc2\xb5s", "Feedback FET compressor (1176 style): Rev A / Rev D-E, attack in \xc2\xb5s" },
+    /* modD9x       */ { "Compresseur 8 rapports + distorsions Dist 2 / Dist 3 (esprit Distressor)", "8-ratio compressor + Dist 2 / Dist 3 distortions (Distressor style)" },
+    /* modSculpt    */ { "Fa\xc3\xa7onneur de transitoires : Attack, Sustain, Focus fr\xc3\xa9quentiel, plafond doux", "Transient shaper: Attack, Sustain, frequency Focus, soft ceiling" },
+    /* modTone      */ { "Timbre propre : Body, Air, Tilt, doseur d'harmoniques pairs / impairs", "Clean tone shaper: Body, Air, Tilt, even / odd harmonic doser" },
 }};
 
 inline Lang& current() noexcept { static Lang l = Lang::fr; return l; }
@@ -113,6 +117,10 @@ inline Key descriptionKey (aura::ModuleType t) noexcept
         case aura::ModuleType::e9ds:  return Key::modE9ds;
         case aura::ModuleType::v9c3:  return Key::modV9c3;
         case aura::ModuleType::v9p2:  return Key::modV9p2;
+        case aura::ModuleType::f976:  return Key::modF976;
+        case aura::ModuleType::d9x:   return Key::modD9x;
+        case aura::ModuleType::sculpt: return Key::modSculpt;
+        case aura::ModuleType::tone:  return Key::modTone;
         case aura::ModuleType::none:  break;
     }
     return Key::modNone;

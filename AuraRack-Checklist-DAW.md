@@ -60,3 +60,12 @@ latence de lecture ≥ 256 éch., un second plugin de référence (compresseur /
 
 ## Notes à relever
 Pour chaque échec : hôte + version, OS, fréquence, buffer, module, réglages, lecture / offline, description (clic, dérive, latence, crash), et si reproductible.
+
+## 4. Nouveaux modules (F976, D9X, AuraSculpt, AuraTone) et V9C3 / V9P2 revus
+- [ ] **V9C3** à 1–3 dB de réduction : transparent (transitoires et image stéréo intactes) ; la distorsion n'apparaît qu'en comprimant fort ; aucun épaississement du bas-médium, aucune perte d'aigus.
+- [ ] **V9P2** : plus de 48V ; **Mic** (JT-16 + Twin OPA) plus ouvert / riche que **Inst/DI** ; sortie propre jusqu'à +21 dBu.
+- [ ] **F976** : Rev A plus colorée que Rev D/E ; Attack 20 → 800 µs (affichée en µs) sans clic ; Release 50 ms → 1,1 s ; Ratio 4 / 8 / 12 / 20 et **ALL** (pompage musical) ; SC HPF ; Meter GR / +4 / +8 (affichage).
+- [ ] **D9X** : les 8 rapports (1:1 = chemin seul), Opto lent, NUKE ; Dist 2 (pair) / Dist 3 (impair), lampes THD 1 % / 3 % ; Detector HPF, Band Emphasis, British, Auto Focus 3 / 6 / 9 dB.
+- [ ] **AuraSculpt** : Attack / Sustain sur une batterie ou un piano (niveau constant en régime établi), Focus + Focus Amount, Ceiling.
+- [ ] **AuraTone** : Body / Air / Tilt à l'oreille, Even / Odd (doses croissantes), sortie neutre à zéro.
+- [ ] Les quatre modules à 44,1, 96 et 384 kHz : mêmes réglages, même rendu ; Auto-Gain, A / B, presets, sauvegarde / rechargement de session.

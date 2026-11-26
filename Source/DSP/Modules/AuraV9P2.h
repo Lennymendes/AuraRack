@@ -11,7 +11,7 @@
 //
 //   Chaîne : Pad / Gain (lissés 20 ms) ─► entrée (Mic : transformateur type JT-16 1:2 ; Inst/DI : directement sur l'étage)
 //   ─► étage discret « Twin OPA » (harmoniques 2 et 3 additifs) ─► HPF (fondu 10 ms) ─► polarité (rampe 5 ms) ─► sortie
-//   symétrique propre (type THAT 1646 : linéaire jusqu'à +21 dBu, genou doux jusqu'à +24 dBu, ADAA sous 176,4 kHz).
+//   symétrique propre (type THAT 1646 : identité exacte jusqu'à +21 dBu, genou doux jusqu'à +24 dBu, ADAA du résidu sous 176,4 kHz).
 //
 //   - Mic : transformateur 1:2 très linéaire (+6 dB passifs, déphasage faible, capacité parasite faible, forte tenue en niveau) ;
 //     il prend 6 dB du gain, l'étage Twin OPA fournit le reste à pleine charge : harmoniques 2 et 3 plus riches, son ouvert, tranchant.
@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include "CompCommon.h"
+#include "ColourStage.h"
 
 namespace aura
 {
@@ -92,8 +92,8 @@ public:
     {
         for (auto* s : { &gainL, &gainR, &hpAmount, &diAmount, &polL, &polR }) s->reset (s->getTarget());
         hp.reset(); coreLp.reset(); distLp1.reset(); distLp2.reset();
-        for (int c = 0; c < 2; ++c) { dcIn[c] = dcSq[c] = hfState[c] = 0.0; xPrev[c] = 0.0; }
-        primPrev[0] = primPrev[1] = 0.0;
+        for (int c = 0; c < 2; ++c) { dcIn[c] = dcSq[c] = hfState[c] = 0.0; }
+        outStage.reset();
         peakAux = -120.0;
         statusPeak = 0.0;
     }
@@ -117,7 +117,7 @@ public:
                 for (int c = 0; c < 2; ++c)
                 {
                     if (hfActive) { hfState[c] += hfCoef * (x[c] - hfState[c]); x[c] += mic * (hfState[c] - x[c]); }
-                    x[c] += mic * kCoreK * kCeilingLin * std::pow (lo[c] / kCeilingLin, 3.0) * -1.0;
+                    { const double b = compdetail::boundedHarmonicInput (lo[c] / kCeilingLin); x[c] -= mic * kCoreK * kCeilingLin * b * b * b; }
                 }
 
             // Étage Twin OPA : harmoniques additifs ∝ niveau (alias-free : calculés sur le signal passe-bas).
@@ -125,7 +125,7 @@ public:
             if (d > 1.0e-9)
             {
                 const double l0 = distLp2.processSample (distLp1.processSample (x[0], 0), 0), l1 = distLp2.processSample (distLp1.processSample (x[1], 1), 1);
-                const double u[2] = { l0 / kCeilingLin, l1 / kCeilingLin };
+                const double u[2] = { compdetail::boundedHarmonicInput (l0 / kCeilingLin), compdetail::boundedHarmonicInput (l1 / kCeilingLin) };
                 for (int c = 0; c < 2; ++c)
                 {
                     const double sq = u[c] * u[c];
@@ -146,8 +146,8 @@ public:
             x[1] *= polR.next();
 
             statusPeak = std::max (statusPeak, std::max (std::abs (x[0]), std::abs (x[1])));
-            L[i] = output (x[0], 0);
-            R[i] = output (x[1], 1);
+            L[i] = outStage.process (x[0], 0);
+            R[i] = outStage.process (x[1], 1);
         }
         // Niveau de crête en dBu, décroissance lente (≈ 20 dB/s) pour l'affichage.
         const double peakDbu = statusPeak > 1.0e-9 ? dsp::gainToDb (statusPeak) - kDbuToDbfs : -120.0;
@@ -187,30 +187,8 @@ private:
         hfActive = fcHf < 0.45 * sampleRate;
         hfCoef = hfActive ? compdetail::alpha (1.0 / (2.0 * dsp::kPi * fcHf), sampleRate) : 0.0;
         polL.reset (1.0); polR.reset (1.0);
-        for (int c = 0; c < 2; ++c) { xPrev[c] = 0.0; primPrev[c] = 0.0; }
+        outStage.prepare (sampleRate, kCeilingLin, kKneeLin);
         updateGains();
-    }
-
-    /** Sortie symétrique propre : identité jusqu'à +21 dBu, genou tanh jusqu'à +24 dBu (C¹) ; ADAA du 1er ordre sous 176,4 kHz. */
-    double output (double x, int c) noexcept
-    {
-        const double w = kCeilingLin - kKneeLin;
-        auto f = [&] (double v) { const double a = std::abs (v); return a <= kKneeLin ? v : std::copysign (kKneeLin + w * std::tanh ((a - kKneeLin) / w), v); };
-        if (sampleRate >= 176400.0 || std::abs (x) < 0.5 * kKneeLin && std::abs (xPrev[c]) < 0.5 * kKneeLin)
-        {
-            xPrev[c] = x; primPrev[c] = prim (x, w);
-            return f (x);
-        }
-        const double pr = prim (x, w), dx = x - xPrev[c];
-        const double y = std::abs (dx) > 1.0e-9 ? (pr - primPrev[c]) / dx : f (0.5 * (x + xPrev[c]));
-        xPrev[c] = x; primPrev[c] = pr;
-        return y;
-    }
-    double prim (double x, double w) const noexcept
-    {
-        const double a = std::abs (x);
-        if (a <= kKneeLin) return 0.5 * a * a;
-        return 0.5 * kKneeLin * kKneeLin + kKneeLin * (a - kKneeLin) + w * w * compdetail::logCosh ((a - kKneeLin) / w);
     }
 
     void updateGains() noexcept
@@ -228,9 +206,10 @@ private:
 
     dsp::OnePoleSmoother gainL, gainR, hpAmount, diAmount, polL, polR;
     dsp::TptSvf hp, coreLp, distLp1, distLp2;
-    double dcIn[2] { 0, 0 }, dcSq[2] { 0, 0 }, hfState[2] { 0, 0 }, xPrev[2] { 0, 0 }, primPrev[2] { 0, 0 };
+    double dcIn[2] { 0, 0 }, dcSq[2] { 0, 0 }, hfState[2] { 0, 0 }, xDummy = 0.0;
     double dcCoefIn = 0.0, hfCoef = 0.0, opaDepth = 0.6;
     bool hfActive = false;
+    compdetail::SoftKnee outStage;
 };
 
 } // namespace aura

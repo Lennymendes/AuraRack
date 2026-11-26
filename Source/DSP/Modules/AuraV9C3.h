@@ -34,7 +34,7 @@
 
 #pragma once
 
-#include "CompCommon.h"
+#include "ColourStage.h"
 #include "FocusTracker.h"
 
 namespace aura
@@ -210,10 +210,11 @@ public:
                 const double c3 = kH3AtRef * q, c2 = kH2AtRef * q;
                 // La non-linéarité est celle de la cellule : elle agit sur le signal d'ENTRÉE de la cellule, puis suit son gain.
                 const double ll = distLp2.processSample (distLp1.processSample (xl, 0), 0), lr = distLp2.processSample (distLp1.processSample (xr, 1), 1);
-                const double d2l = ll * ll, d2r = lr * lr;
+                const double bl = compdetail::boundedHarmonicInput (ll), br = compdetail::boundedHarmonicInput (lr);   // fini à tout niveau
+                const double d2l = bl * bl, d2r = br * br;
                 dcZ[0] += dcCoef * (d2l - dcZ[0]); dcZ[1] += dcCoef * (d2r - dcZ[1]);
-                yl += gl * (-c3 * ll * ll * ll + c2 * (d2l - dcZ[0]));
-                yr += gr * (-c3 * lr * lr * lr + c2 * (d2r - dcZ[1]));
+                yl += gl * (-c3 * bl * d2l + c2 * (d2l - dcZ[0]));
+                yr += gr * (-c3 * br * d2r + c2 * (d2r - dcZ[1]));
             }
             else if (distActive && ! driveSm.isSmoothing())
                 distActive = false;

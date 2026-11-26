@@ -15,8 +15,8 @@ namespace aura
 {
 /** Types de module. L'ordre est celui du sélecteur de slot (0 = slot vide) et ne doit jamais changer : il est sauvegardé. */
 // L'ordre est persisté dans les sessions : on n'ajoute qu'à la fin.
-enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b, l9a, e9ds, v9c3, v9p2 };
-inline constexpr int kNumModuleTypes = 13;
+enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b, l9a, e9ds, v9c3, v9p2, f976, d9x, sculpt, tone };
+inline constexpr int kNumModuleTypes = 17;
 
 /** Nombre de paramètres génériques par slot (le module le plus riche en utilise 10). */
 inline constexpr int kMaxModuleParams = 10;

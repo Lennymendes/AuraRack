@@ -6,7 +6,7 @@ traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marq
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : **version complète (candidate finale, à valider en DAW)** : Étape 5 (auto-gain, A / B, presets d'usine, utilitaire Stéréo / Largeur / Mono grave, latence totale et CPU en barre) en plus de l'Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**, **V9C3**, **V9P2**) et des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
+**État** : **version complète, 16 modules (candidate finale, à valider en DAW)** : **F976**, **D9X**, **AuraSculpt** et **AuraTone** ajoutés, **V9C3** allégé et **V9P2** refondu (voir leurs sections) ; Étape 5 (auto-gain, A / B, presets d'usine, utilitaire Stéréo / Largeur / Mono grave, latence totale et CPU en barre) en plus de l'Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**, **V9C3**, **V9P2**) et des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
 **AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, zone haute « module actif » + bande de chaîne
 de 10 tuiles, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
 **Auto Focus**) et **L9A** (LA-2A) ; **E9DS** (de-esser, avec Lookahead), **V9C3** (compresseur VCA à Auto Focus) et **V9P2** (préampli double canal) complètent la liste. Voir aussi `AuraRack-Checklist-DAW.md` (séance de validation en DAW).
@@ -31,7 +31,7 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 |---|---|
 | `Source/DSP/AuraDspCore.h` | SVF TPT, lisseurs, rampes, ligne de retard (Lagrange 3e ordre, reset O(1)), sur-échantillonneur polyphase, minimum glissant |
 | `Source/DSP/AuraModuleDSP.h` | Classe de base `AuraModuleDSP`, description des paramètres (`ParamSpec`, `ModuleInfo`), bus de clé |
-| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS`, `AuraV9C3`, `AuraV9P2` |
+| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS`, `AuraV9C3`, `AuraV9P2`, `AuraF976`, `AuraD9X`, `AuraSculpt`, `AuraTone`, `ColourStage` (briques communes) |
 | `Source/DSP/AutoGain.h` | Compensation de gain automatique (`LevelMatcher`) : par module et pour le rack |
 | `Source/DSP/StereoUtility.h` | Utilitaire Stéréo / Largeur / Mono grave (Mid / Side, Linkwitz-Riley 4e ordre) |
 | `Source/Presets.h` | Presets d'usine (Voix, Piano / Acoustique, Bus, Mastering) |
@@ -40,11 +40,11 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (168 paramètres), textes qui suivent le module du slot |
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
-| `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate`, `VertigoFaceplate` (V9C3 + V9P2) |
+| `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate`, `VertigoFaceplate` (façade à tableau : V9C3, V9P2, F976, D9X, AuraSculpt, AuraTone) |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (270 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (362 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (16 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel, A / B, presets, session, cohérence des 12 modules (52 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel, A / B, presets, session, cohérence des 16 modules, liaison de chaque contrôle des 6 façades à tableau (56 vérifications) |
 
 ## Architecture audio
 
@@ -97,7 +97,7 @@ Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack),
 *Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
-## Les 12 modules
+## Les 16 modules
 
 | Module | Algorithme | Paramètres |
 |---|---|---|
@@ -113,6 +113,10 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **E9DS** | De-esser à bande sibilante dynamique avec façade dédiée : voir la section « E9DS ». | Threshold, Frequency, Width, Range, Release, Mode, Listen, Lookahead |
 | **V9C3** | Compresseur VCA quadruple (esprit Vertigo VSC-3) à Auto Focus : voir la section « V9C3 ». | Threshold (dBu), Ratio, Attack, Release, Make-Up, SC HPF, Detect, Mode, Auto Focus, Focus |
 | **V9P2** | Préampli double canal (esprit Vertigo VSP-2) : voir la section « V9P2 ». | Gain, Fine, HPF, Pad, Phase, Input, Link, R Offset |
+| **F976** | Compresseur FET à contre-réaction (esprit 1176, Rev A / Rev D-E) : voir la section « F976 ». | Input, Output, Attack (µs), Release, Ratio (4/8/12/20/ALL), Révision, SC HPF, Meter |
+| **D9X** | Compresseur 8 rapports + distorsions (esprit Distressor) : voir la section « D9X ». | Input, Ratio, Attack, Release, Distortion, Detector HPF, Band Emphasis, British, Auto Focus, Output |
+| **AuraSculpt** | Façonneur de transitoires / dynamique : voir la section « AuraSculpt ». | Attack, Sustain, Speed, Focus, Focus Amount, Ceiling, Output |
+| **AuraTone** | Timbre propre Body / Air / Tilt + doseur d'harmoniques : voir la section « AuraTone ». | Body, Air, Tilt, Even, Odd, Output |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -315,6 +319,63 @@ Dual : le canal faible reste intact ; M/S : Mid −4 dB et plus, Side ±0,3 dB ;
 - Façade : barre de niveau d'entrée en dBu (le module publie la crête **avant** l'étage de saturation), voyants Signal (vert) / Clip
   (rouge), gain net affiché ; R Offset estompé en mode Linked.
 
+## F976 : compresseur FET à contre-réaction (esprit 1176)
+
+> Conception AuraRack, sans revendication de fidélité au matériel. DSP : `Source/DSP/Modules/AuraF976.h`, `double`, latence 0, constantes en secondes.
+> 0 dBu = −18 dBFS. **Seuil fixe −10 dBFS** à l'entrée de la cellule : **Input** pousse le signal (donc la compression), **Output** règle le niveau.
+
+- **Rev A « Blue Stripe »** : genou 6 dB, coloration d'entrée plus riche (H2 + H3 : −40 / −39 dBc à Input +24 dB) ; **Rev D/E « Blackface »** : genou 3 dB,
+  plus propre et plus tranchant (−54 / −52 dBc).
+- **Ratio** 4 / 8 / 12 / 20 : 1 et **ALL** (tous boutons) : seuil −3 dB, rapport 12 → 30:1 croissant avec le dépassement, attaque et
+  relâchement × 0,6, coloration × 1,6 (écrasement agressif, pompage musical).
+- **Attack 20 … 800 µs, en µs réelles** (le potard affiche la durée ; constante de temps exacte de la réduction) : t63 mesuré **18 / 96 / 391 / 786 µs**
+  pour 20 / 100 / 400 / 800 µs à 384 kHz, et même durée (±20 %) à 44,1 kHz. **Release 50 … 1100 ms**, deux voies, la lente pèse davantage après une
+  compression soutenue (dépendant du programme). **SC HPF** Off / 60 / 90 / 130 / 200 Hz (détecteur seulement).
+- **Meter (GR / +4 / +8)** : choix de la grandeur lue sur le VU de la façade (réduction, ou niveau de sortie rapporté à +4 / +8 dBu). C'est un **affichage**
+  (comme sur le matériel) : seul contrôle de ce module sans effet sur le son. Le **Mix** de la façade est celui du slot.
+- Mesures : courbes statiques des 5 rapports × 2 révisions = théorie à ±0,3 dB ; ALL écrase de 2,8 dB de plus que 20:1 ; SC HPF 130 Hz : 40 Hz
+  −5,8 dB de réduction ; 5 kHz comprimé à 44,1 kHz avec Attack 20 µs : produits < −52 dBc ; réduction identique à 44,1 / 384 kHz (0,04 dB).
+
+## D9X : compresseur 8 rapports + distorsions (esprit Distressor)
+
+> Conception AuraRack, sans revendication de fidélité au matériel. DSP : `Source/DSP/Modules/AuraD9X.h`, `double`, latence 0.
+> Seuil fixe −18 dBFS (0 dBu) ; **Input** pousse la compression, **Output** règle le niveau.
+
+- **8 rapports**, chacun avec son genou et ses constantes de temps : **1:1** (aucune compression : chemin analogique + distorsions seulement, bit-exact en Clean),
+  2:1 (genou 10 dB), 3:1 (8 dB), 4:1 (6 dB), 6:1 (4 dB), **10:1 Opto** (rapport croissant de 1:1 vers 10:1 sans coude, relâchement lent à deux voies
+  dépendant du programme), 20:1 (2 dB) et **NUKE** (écrêtage de crête, attaque ≤ 10 µs ; sans anticipation : une transitoire instantanée peut dépasser
+  de quelques dB pendant ≈ 0,1 ms).
+- **Distortion** : **Dist 2** = harmonique 2 (chaleur « lampe »), **Dist 3** = harmonique 3 (compression « bande ») ; termes additifs sans repliement
+  (passe-bas 4e ordre, 0,45·fs/3), plus profonds avec le niveau et la réduction. Mesuré (1:1, Input +20 dB) : Clean < −110 dBc ; Dist 2 H2 > H3 + 12 dB ;
+  Dist 3 H3 > H2 + 12 dB ; repliements < −65 dBc (15 kHz à 44,1 kHz).
+- **Detector HPF** (Off / 60 / 120 / 240 Hz) et **Band Emphasis** (0 … +12 dB à 6 kHz) : détecteur seulement ; **British** : courbe plus agressive à tous les rapports
+  (rapport × (1 + 0,08·dépassement), attaque × 0,5, relâchement × 0,6) ; **Auto Focus** Off / 3 / 6 / 9 dB (FocusTracker, comme le W9BMK1) :
+  mesuré 6 dB à ±2 dB sur deux niveaux d'entrée.
+- **Façade** : bargraphe de 20 LED (1 dB par segment) + lampes **THD 1 % / 3 %** : estimation de la distorsion harmonique de l'étage pour la crête courante
+  (mêmes coefficients que le traitement, vérifiée par mesure à ±40 %).
+
+## AuraSculpt : façonneur de transitoires / dynamique
+
+> DSP : `Source/DSP/Modules/AuraSculpt.h`, `double`, latence 0, indépendant du niveau d'entrée.
+
+- **Attack / Sustain** (±12 dB) : deux enveloppes (rapide / lente), le gain suit leur écart en dB ; **en régime établi le gain vaut exactement 0 dB** (biais du
+  détecteur retiré par une moyenne lente de 0,25 s : aucun pompage sur un grave tenu). **Speed** 0,5 … 4 × ; **Focus** 60 Hz … 12 kHz + **Focus Amount** 0 … 100 % :
+  0 = tout le spectre, 100 = seulement la bande autour de Focus (le reste intact) ; **Ceiling** −12 … 0 dBFS (0 = Off, transparent) : plafond doux ADAA ;
+  **Output** ±24 dB.
+- Mesures : Attack +9 dB → attaque +8,8 dB, corps +0,0 dB ; Sustain −12 dB → queue −6,3 dB, attaque inchangée ; même effet à −32 et −12 dBFS ; Focus 6 kHz à 100 % :
+  salve à 6 kHz renforcée, salve à 200 Hz intacte (< 0,6 dB) ; tout à 0 : sortie = entrée bit pour bit ; 44,1 vs 384 kHz : ±1 dB.
+- **Ceiling est un plafond doux** : sous surcharge extrême (+12 dB) la crête peut dépasser le plafond d'environ 1 dB (mesuré). Sous le genou (3 dB sous le plafond) : identité exacte.
+
+## AuraTone : timbre propre (Body / Air / Tilt / harmoniques)
+
+> DSP : `Source/DSP/Modules/AuraTone.h`, `double`, latence 0. Filtres SVF TPT (stables à 20 Hz comme à 384 kHz).
+
+- **Body** ±12 dB (cloche large à 180 Hz, Q 0,5), **Air** ±12 dB (étagère haute 11 kHz, Q 0,6), **Tilt** ±6 dB (étagères appariées autour de 650 Hz), **Even** 0 … 100 %
+  (harmonique 2, « chaleur »), **Odd** 0 … 100 % (harmonique 3, « densité »), **Output** ±24 dB. Tout à 0 : sortie = entrée bit pour bit.
+- Mesures : Body +6 dB = +6,0 dB à 180 Hz, < 0,5 dB à 5 kHz ; Air +6 dB = +6 dB à 20 kHz, < 0,3 dB à 1 kHz, même réponse à 96 et 384 kHz ; Tilt +4 dB = ∓2 dB aux extrémités ;
+  à −12 dBFS, Even 100 % : H2 ≈ −28 dBc, Odd 100 % : H3 ≈ −34 dBc ; harmoniques identiques à 96 et 384 kHz (±0,6 dB) ; 15 kHz à 44,1 kHz doseurs à 100 % : repliements < −80 dBc.
+- La courbe de la façade est **schématique** (formes lissées de même largeur que les filtres), pas la réponse mesurée exacte.
+
 ## Étape 5 : gain staging, A / B, presets, utilitaire stéréo, suivi latence / CPU
 
 ### Auto-gain (`Source/DSP/AutoGain.h`)
@@ -410,7 +471,7 @@ elle est transmise à l'hôte par le minuteur du processeur (≈ 30 ms). Le CPU 
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 270 vérifications), `aurarack_host_test` (hôte VST3, 16) et `aurarack_ui_test` (éditeur, 52) : tout passe
+`aurarack_dsp_test` (sans JUCE, 362 vérifications), `aurarack_host_test` (hôte VST3, 16) et `aurarack_ui_test` (éditeur, 56) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -459,6 +520,11 @@ dans l'état (`order="0,1,…"`).
   DAW (macOS, Windows, HiDPI) restent à valider. Pas encore d'affichage de courbes (EQ, courbe de transfert du comp).
 - **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
+- **Nouveaux modules (F976, D9X, AuraSculpt, AuraTone) et corrections V9C3 / V9P2** : constantes calibrées par mesure, **non comparées au matériel** ; façades non vues dans un
+  vrai DAW. **F976 et D9X** : détecteur propre à chaque module (pas de clé externe) ; la loi à contre-réaction est modélisée par son équivalent statique (stable à toute fréquence
+  d'échantillonnage) ; le **Meter** du F976 est un affichage. **NUKE** n'a pas d'anticipation. **Distorsions et plafonds** : harmoniques additifs sans repliement ; plafonds doux
+  (AuraSculpt Ceiling, sortie V9P2) en ADAA du 1er ordre sur le seul résidu non linéaire : à 44,1 kHz un 7 kHz à +22 dBu repasse à −85 dBc de repliement, mais un signal très aigu
+  fortement surchargé (15 kHz à +4 dBFS dans le genou) n'est pas propre : travaillez à 88,2 kHz et plus pour ces cas extrêmes. Les termes non linéaires sont bornés : un signal flottant à +60 dBFS reste fini.
 - **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
 - **E9DS** : conception propre à AuraRack (la spécification du E9DS du lecteur AURA n'est pas disponible) ; détection sur la bande seule (pas de détection relative au niveau large-bande), anticipation optionnelle (Lookahead, jusqu'à 2 ms, qui ajoute sa latence) ; avec Lookahead Off (latence 0, attaque 0,25 ms) un « t » ou « ch » très bref peut passer avant la réduction. Constantes validées par mesure sur signaux synthétiques, **pas à l'écoute sur de vraies voix** : à valider.
 - **V9C3** : **Threshold, Ratio, Attack, Release, Make-Up et Focus sont communs aux deux voies** en Dual et M/S (pas de réglages séparés par voie) ; **pas de compensation d'égale sonie** au changement de Ratio ; la distorsion du VCA est une approximation calibrée par mesure, pas une comparaison avec le matériel ; Soft utilise une approximation (ratio 4, sans genou) dans l'Auto Focus (validé à ±1,5 dB).

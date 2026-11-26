@@ -39,6 +39,10 @@ namespace colours
             case ModuleType::e9ds:  return juce::Colour (0xffff7ab8);
             case ModuleType::v9c3:  return juce::Colour (0xff8fd14f);
             case ModuleType::v9p2:  return juce::Colour (0xffe8a24a);
+            case ModuleType::f976:  return juce::Colour (0xff6fb2ff);
+            case ModuleType::d9x:   return juce::Colour (0xffff7a45);
+            case ModuleType::sculpt: return juce::Colour (0xffb28dff);
+            case ModuleType::tone:  return juce::Colour (0xff4fd1c5);
             case ModuleType::none:  break;
         }
         return stroke;
