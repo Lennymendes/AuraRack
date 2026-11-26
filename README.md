@@ -104,7 +104,6 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraLimit** | Lookahead 1,5 ms, détection True Peak 8× (2× en DXD, 32 coefficients par phase ; le 4× de BS.1770 sous-estime de ~0,5 dB les crêtes proches de 20 kHz), minimum glissant, relâchement adaptatif (court sur transitoire isolé, long sur réduction soutenue), moyenne glissante de la longueur de l'anticipation : la rampe d'attaque atteint le gain requis à l'arrivée de la crête (démonstration ci-dessous). | Gain, Ceiling (dBTP), Release, Adaptive |
 | **AuraDelay** | Ping-pong stéréo continu (0 % = deux delays, 100 % = alternance L / R), Lagrange 3e ordre, temps lissé (glissement type bande), Low Cut / High Cut TPT dans la boucle, retard de groupe du High Cut compensé. | Time, Feedback, Ping-Pong, Low Cut, High Cut, R / L |
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
-
 | **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée et **Auto Focus** : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output, Auto Focus, Focus |
 | **L9A** | Amplificateur de nivellement opto (esprit LA-2A) avec façade dédiée : voir la section « L9A ». | Peak Reduction, Gain, Mode, Meter |
 
@@ -286,9 +285,9 @@ dans l'état (`order="0,1,…"`).
 - **Interface** : rendue et testée sans fenêtre (rendu PNG, glisser-déposer simulé) ; l'aspect et la fluidité dans de vrais
   DAW (macOS, Windows, HiDPI) restent à valider. Pas encore d'affichage de courbes (EQ, courbe de transfert du comp).
 - **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
+  Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
 - **Auto Focus** : lent par construction (≈ 10 s pour se caler après un changement de programme) ; le Threshold manuel est ignoré pendant l'Auto ; testé sur une parole synthétique et un sinus, pas sur du matériel musical varié : à valider à l'écoute (percussions, mix complet).
-  Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **Aura-Tube, Attack court** : à 0,5 ms l'enveloppe suit les graves (< 500 Hz) : comportement réel d'un compresseur
   rapide, pas un défaut de calcul. Monter Attack à quelques ms le supprime.
 - **L-Comp** : sans anticipation, l'attaque de ~50 µs laisse passer le tout début d'un pic ; c'est le plafond doux
