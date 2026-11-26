@@ -30,7 +30,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int kDesignWidth = 1280, kDesignHeight = 780, kTopBarHeight = 62, kStripHeight = 132;
+    static constexpr int kDesignWidth = 1280, kDesignHeight = 780, kTopBarHeight = 96, kStripHeight = 132;
 
     /** Contenu à taille fixe (1280 × 780), mis à l'échelle en bloc quand la fenêtre est redimensionnée. */
     struct Content final : juce::Component

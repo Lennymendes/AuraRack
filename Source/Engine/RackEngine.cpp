@@ -148,6 +148,7 @@ void RackEngine::prepare (double newSampleRate, int /*maxBlockSize : traité par
         s.paramsDirty = true;
         s.wasBypassed = false;
 
+        s.agc.prepare (sampleRate);
         s.dry.prepare (sampleRate, maxModuleLatencySamples);
         s.dry.setLatency (s.current->latency);
         s.dry.reset();
@@ -160,6 +161,9 @@ void RackEngine::prepare (double newSampleRate, int /*maxBlockSize : traité par
     outputGain.reset (gainFromDb (readOr (globals.outputGain, 0.0f)));
     masterMix.reset (proportionFromPercent (readOr (globals.masterMix, 100.0f)));
 
+    rackAgc.prepare (sampleRate);
+    utility.prepare (sampleRate);
+    corrLR = corrLL = corrRR = 0.0;
     masterDry.prepare (sampleRate, kNumSlots * maxModuleLatencySamples);
     masterDry.setLatency (totalLatency);
     masterDry.reset();
@@ -192,7 +196,10 @@ void RackEngine::reset() noexcept
         s.inTrim.reset (s.inTrim.getTarget());
         s.outTrim.reset (s.outTrim.getTarget());
         s.dry.reset();
+        s.agc.resetMeasurement();   // le gain acquis est conservé
     }
+    rackAgc.resetMeasurement();
+    utility.reset();
     inputGain.reset (inputGain.getTarget());
     outputGain.reset (outputGain.getTarget());
     masterMix.reset (masterMix.getTarget());
@@ -336,6 +343,8 @@ void RackEngine::processChunk (double* L, double* R, int n, const double* scL, c
         peakInR = std::max (peakInR, std::abs (R[i]));
     }
     masterDry.process (rackInL.data(), rackInR.data(), dryL.data(), dryR.data(), n);
+    const bool rackAgcOn = readOr (globals.autoGain, 0.0f) >= 0.5f;
+    rackAgc.feedInput (rackInL.data(), rackInR.data(), n, rackAgcOn);
 
     // 3. Clé sidechain.
     SidechainBlock key;
@@ -363,17 +372,37 @@ void RackEngine::processChunk (double* L, double* R, int n, const double* scL, c
         processSlot (slots[(std::size_t) index], index, L, R, n, key);
     }
 
-    // 5. Fondu de réordonnancement en sortie, Mix maître (Dry aligné sur la latence du rack), gain de sortie.
-    double peakOutL = 0.0, peakOutR = 0.0;
+    // 5. Auto-gain du rack, fondu de réordonnancement en sortie, Mix maître (Dry aligné sur la latence du rack),
+    //    utilitaire Stéréo / Largeur / Mono grave, gain de sortie.
+    rackAgc.processOutput (L, R, n, rackAgcOn);
+    meters.rackAgcDb.store ((float) rackAgc.getCorrectionDb(), std::memory_order_relaxed);
+
     for (int i = 0; i < n; ++i)
     {
         const double mm = masterMix.next();
-        const double go = outputGain.next();
         const double dl = dryL[(std::size_t) i], dr = dryR[(std::size_t) i];
-        L[i] = (dl * (1.0 - mm) + L[i] * rg[i] * mm) * go;
-        R[i] = (dr * (1.0 - mm) + R[i] * rg[i] * mm) * go;
+        L[i] = dl * (1.0 - mm) + L[i] * rg[i] * mm;
+        R[i] = dr * (1.0 - mm) + R[i] * rg[i] * mm;
+    }
+
+    utility.setParameters ((double) readOr (globals.width, 100.0f), (int) std::lround (readOr (globals.bassMono, 0.0f)), readOr (globals.mono, 0.0f) >= 0.5f);
+    utility.process (L, R, n);
+
+    double peakOutL = 0.0, peakOutR = 0.0, sLR = 0.0, sLL = 0.0, sRR = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double go = outputGain.next();
+        L[i] *= go;
+        R[i] *= go;
         peakOutL = std::max (peakOutL, std::abs (L[i]));
         peakOutR = std::max (peakOutR, std::abs (R[i]));
+        sLR += L[i] * R[i]; sLL += L[i] * L[i]; sRR += R[i] * R[i];
+    }
+    {   // corrélation L/R lissée (~0,3 s) ; silence -> +1 (mono parfait, rien à signaler)
+        const double a = 1.0 - std::exp (-(double) n / (0.3 * sampleRate));
+        corrLR += a * (sLR / n - corrLR); corrLL += a * (sLL / n - corrLL); corrRR += a * (sRR / n - corrRR);
+        const double d = std::sqrt (corrLL * corrRR);
+        meters.correlation.store (d > 1.0e-12 ? (float) std::clamp (corrLR / d, -1.0, 1.0) : 1.0f, std::memory_order_relaxed);
     }
 
     auto holdMax = [] (std::atomic<float>& a, double v)
@@ -402,6 +431,7 @@ void RackEngine::adoptIncoming (Slot& s, int /*slotIndex*/) noexcept
     s.current = in;
     s.swap.reset (0.0);
     s.swap.setTarget (1.0);
+    s.agc.reset (0.0);   // nouveau module : la correction de l'ancien ne le concerne pas
     s.paramsDirty = true;
     s.dry.setLatency (in->latency);
 }
@@ -495,13 +525,17 @@ void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int 
         wl[i] = L[i] * g;
         wr[i] = R[i] * g;
     }
+    const bool agcOn = cur != nullptr && readOr (s.sources.autoGain, 0.0f) >= 0.5f;
     if (s.previous != nullptr)
     {
         std::copy (wl, wl + n, pl);
         std::copy (wr, wr + n, pr);
         if (prev != nullptr) prev->process (pl, pr, n, key);
     }
+    s.agc.feedInput (wl, wr, n, agcOn);
     if (cur != nullptr) cur->process (wl, wr, n, key);
+    s.agc.processOutput (wl, wr, n, agcOn);
+    meters.slotAgcDb[(std::size_t) slotIndex].store ((float) s.agc.getCorrectionDb(), std::memory_order_relaxed);
 
     // Mix (Dry aligné), trim de sortie, fondu de bypass linéaire 5 ms, fondu d'échange 5 ms.
     for (int i = 0; i < n; ++i)

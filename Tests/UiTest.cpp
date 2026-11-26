@@ -9,14 +9,16 @@
 #include "../Source/UI/W9bFaceplate.h"
 
 #include <cstdio>
+#include <cstring>
 #include <set>
 
 namespace
 {
 int failures = 0, checks = 0;
 
-void check (bool ok, const char* what)
+void check (bool ok, const char* what, int value = 0)
 {
+    juce::ignoreUnused (value);
     ++checks;
     if (! ok) ++failures;
     std::printf ("  [%s] %s\n", ok ? " OK " : "FAIL", what);
@@ -327,6 +329,210 @@ int main (int argc, char** argv)
         apvts.getParameter (aura::params::generic (9, aura::AuraW9B::autoFocus))->setValueNotifyingHost (0.0f);
         w9.tick (1.0f / 60.0f, { 0.0f, 0.0f, -31.0f });
         check (thresh != nullptr && thresh->isEnabled(), "W9BMK1 en MANUAL : le potard Thresh est de nouveau réglable");
+    }
+
+
+    // =================================================================================================
+    // Finalisation : A / B, presets, auto-gain, utilitaire stéréo, latence, cohérence de TOUS les modules.
+    // =================================================================================================
+    {
+        std::puts ("\n-- A / B, presets, session");
+        const double rate = 48000.0;
+        auto makeProc = [&] (std::unique_ptr<AuraRackProcessor>& p)
+        {
+            p = std::make_unique<AuraRackProcessor>();
+            p->setProcessingPrecision (juce::AudioProcessor::doublePrecision);
+            p->setPlayConfigDetails (4, 2, rate, 512);
+            p->prepareToPlay (rate, 512);
+        };
+        auto valueOf = [] (AuraRackProcessor& p, const juce::String& id) { return p.getValueTreeState().getParameter (id)->getValue(); };
+        auto setPlainOn = [] (AuraRackProcessor& p, const juce::String& id, float plain)
+        {
+            auto* prm = p.getValueTreeState().getParameter (id);
+            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
+        };
+
+        std::unique_ptr<AuraRackProcessor> q;
+        makeProc (q);
+
+        // Presets d'usine : modules, ordre, auto-gain, rendu sain, non modifié juste après le chargement.
+        const auto& factory = aura::presets::factory();
+        check (AuraRackProcessor::getNumFactoryPresets() == 4, "4 presets d'usine : Voix, Piano / Acoustique, Bus, Mastering");
+        for (int i = 0; i < AuraRackProcessor::getNumFactoryPresets(); ++i)
+        {
+            q->loadFactoryPreset (i);
+            bool typesOk = true, agcOk = true;
+            for (int s = 0; s < aura::kNumSlots; ++s)
+            {
+                const auto want = s < (int) factory[(std::size_t) i].slots.size() ? factory[(std::size_t) i].slots[(std::size_t) s].type : aura::ModuleType::none;
+                typesOk = typesOk && q->getSlotModule (s) == want;
+                const bool wantAgc = s < (int) factory[(std::size_t) i].slots.size() && factory[(std::size_t) i].slots[(std::size_t) s].autoGain;
+                agcOk = agcOk && (valueOf (*q, aura::params::autoGainSlot (s)) > 0.5f) == wantAgc;
+            }
+            for (int b = 0; b < 6; ++b) renderAudio (*q, rate, 24);   // 3 s de signal musical
+            juce::AudioBuffer<double> buf (4, 512); buf.clear(); juce::MidiBuffer midi; q->processBlock (buf, midi);
+            bool finite = true;
+            for (int ch = 0; ch < 2; ++ch) for (int n = 0; n < 512; ++n) finite = finite && std::isfinite (buf.getSample (ch, n)) && std::abs (buf.getSample (ch, n)) < 8.0;
+            char what[160];
+            std::snprintf (what, sizeof what, "Preset « %s » : modules, ordre et auto-gain conformes, rendu fini, non modifié", factory[(std::size_t) i].nameFr);
+            check (typesOk && agcOk && finite && q->getSlotOrder() == aura::RackRouting::identity() && q->getPresetIndex() == i && ! q->isPresetModified(), what);
+        }
+        q->loadFactoryPreset (0);
+        for (int b = 0; b < 4; ++b) renderAudio (*q, rate, 12);
+        check (q->getMeters().activeLatency.load() == 48,
+               "Latence totale : preset Voix (E9DS Lookahead 1 ms à 48 kHz) = 48 échantillons (valeur affichée en barre ; le minuteur la transmet à l'hôte)", q->getMeters().activeLatency.load());
+        q->loadFactoryPreset (3);
+        setPlainOn (*q, aura::params::generic (1, aura::AuraV9C3::focus), 5.0f);
+        check (q->isPresetModified(), "Preset retouché : détecté comme modifié");
+
+        // A / B.
+        q->loadFactoryPreset (0);                       // Voix
+        const auto v9c3Slot = 2;
+        const float ratioA = valueOf (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio));
+        check (! q->isAbStored (1) && q->getAbActive() == 0, "A actif au départ ; B vide");
+        q->selectAb (1);
+        check (q->getAbActive() == 1 && q->isAbStored (1) && std::abs (valueOf (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio)) - ratioA) < 1.0e-6f,
+              "Bascule vers B : B part d'une copie de A");
+        setPlainOn (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio), 4.0f);          // Limit en B
+        q->setSlotModule (3, aura::ModuleType::limit);                                           // EQ -> Limit en B
+        q->setSlotModule (6, aura::ModuleType::delay);
+        const float ratioB = valueOf (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio));
+        q->selectAb (0);
+        check (std::abs (valueOf (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio)) - ratioA) < 1.0e-6f
+                   && q->getSlotModule (3) == aura::ModuleType::eq && q->getSlotModule (6) == aura::ModuleType::none,
+               "Retour sur A : réglages ET modules de A restaurés");
+        q->selectAb (1);
+        check (std::abs (valueOf (*q, aura::params::generic (v9c3Slot, aura::AuraV9C3::ratio)) - ratioB) < 1.0e-6f
+                   && q->getSlotModule (3) == aura::ModuleType::limit && q->getSlotModule (6) == aura::ModuleType::delay,
+               "Retour sur B : les retouches de B sont conservées");
+        renderAudio (*q, rate, 24);
+        {   // L'ordre fait partie de l'instantané.
+            q->selectAb (0);
+            q->moveSlot (0, 3);
+            const auto orderA = q->getSlotOrder();
+            q->selectAb (1);
+            const bool bUntouched = q->getSlotOrder() == aura::RackRouting::identity();
+            q->selectAb (0);
+            check (bUntouched && q->getSlotOrder() == orderA, "L'ordre des slots est mémorisé séparément en A et en B");
+        }
+        q->copyToOtherAb();
+        q->selectAb (1);
+        check (q->isAbStored (1) && q->getSlotModule (3) == aura::ModuleType::eq && q->getSlotOrder() == q->getSlotOrder()
+                   && q->getSlotModule (6) == aura::ModuleType::none, "Copie vers l'autre emplacement : B devient identique à A");
+        q->setSlotModule (3, aura::ModuleType::limit);   // B se distingue de nouveau
+        q->setSlotModule (6, aura::ModuleType::delay);
+
+        // Session : preset, A / B, globaux, auto-gain par slot.
+        setPlainOn (*q, aura::params::width, 140.0f);
+        setPlainOn (*q, aura::params::bassMono, 3.0f);
+        setPlainOn (*q, aura::params::mono, 1.0f);
+        setPlainOn (*q, aura::params::autoGain, 1.0f);
+        setPlainOn (*q, aura::params::autoGainSlot (6), 1.0f);
+        juce::MemoryBlock blob;
+        q->getStateInformation (blob);
+        std::unique_ptr<AuraRackProcessor> r;
+        makeProc (r);
+        r->setStateInformation (blob.getData(), (int) blob.getSize());
+        check (r->getPresetIndex() == q->getPresetIndex() && r->getAbActive() == 1 && r->isAbStored (0) && r->isAbStored (1),
+               "Session restaurée : preset, A / B actif et les deux emplacements");
+        check (std::abs (valueOf (*r, aura::params::width) - valueOf (*q, aura::params::width)) < 1.0e-6f && valueOf (*r, aura::params::mono) > 0.5f
+                   && valueOf (*r, aura::params::autoGain) > 0.5f && valueOf (*r, aura::params::autoGainSlot (6)) > 0.5f
+                   && std::abs (valueOf (*r, aura::params::bassMono) - valueOf (*q, aura::params::bassMono)) < 1.0e-6f,
+               "Session restaurée : Width, Bass Mono, Mono, auto-gain rack et slot");
+        check (r->getSlotModule (3) == aura::ModuleType::limit && r->getSlotModule (6) == aura::ModuleType::delay, "Session restaurée : modules du B actif");
+        r->selectAb (0);
+        check (r->getSlotModule (3) == aura::ModuleType::eq && r->getSlotModule (6) == aura::ModuleType::none && valueOf (*r, aura::params::mono) < 0.5f,
+              "Session restaurée : l'emplacement A, y compris le global Mono, revient intact");
+        r->clearRack();
+        bool allEmpty = true; for (int s = 0; s < aura::kNumSlots; ++s) allEmpty = allEmpty && r->getSlotModule (s) == aura::ModuleType::none;
+        check (allEmpty && r->getPresetIndex() == -1, "Rack vide : tous les slots vides, aucun preset");
+
+        // Sessions d'avant (sans A / B ni nouveaux paramètres) : les valeurs par défaut s'appliquent.
+        {
+            juce::MemoryBlock legacy;
+            std::unique_ptr<AuraRackProcessor> old;
+            makeProc (old);
+            old->getStateInformation (legacy);
+            auto xml = juce::AudioProcessor::getXmlFromBinary (legacy.getData(), (int) legacy.getSize());
+            bool stripped = false;
+            if (xml != nullptr)
+            {
+                for (auto* child = xml->getFirstChildElement(); child != nullptr;)
+                {
+                    auto* next = child->getNextElement();
+                    const auto id = child->getStringAttribute ("id");
+                    if (id == aura::params::autoGain || id == aura::params::width || id == aura::params::bassMono || id == aura::params::mono || id.endsWith ("_agc") || child->hasTagName ("AB"))
+                    { xml->removeChildElement (child, true); stripped = true; }
+                    child = next;
+                }
+                juce::MemoryBlock rebuilt;
+                juce::AudioProcessor::copyXmlToBinary (*xml, rebuilt);
+                std::unique_ptr<AuraRackProcessor> fresh;
+                makeProc (fresh);
+                fresh->setStateInformation (rebuilt.getData(), (int) rebuilt.getSize());
+                check (stripped && std::abs (valueOf (*fresh, aura::params::width) - 100.0f / 200.0f) < 1.0e-6f && fresh->getAbActive() == 0 && ! fresh->isAbStored (1),
+                       "Session d'une version antérieure : nouveaux paramètres par défaut (Width 100 %), A actif, B vide");
+            }
+        }
+
+        // Barre du haut : boutons A / B, menu des presets, texte du preset.
+        std::puts ("\n-- barre du haut");
+        auto& bar = content.topBar;
+        const int abBefore = processor.getAbActive();
+        bar.getAbButton (1).onClick();
+        for (int i = 0; i < 3; ++i) editor.tickForTesting (1.0f / 60.0f);
+        const bool toB = processor.getAbActive() == 1;
+        bar.getAbButton (0).onClick();
+        for (int i = 0; i < 3; ++i) editor.tickForTesting (1.0f / 60.0f);
+        check (abBefore == 0 && toB && processor.getAbActive() == 0, "Boutons A / B : un clic bascule la configuration complète");
+        int menuItems = 0;
+        { auto menu = bar.buildPresetMenu(); juce::PopupMenu::MenuItemIterator it (menu); while (it.next()) if (! it.getItem().isSeparator) ++menuItems; }
+        check (menuItems == 5, "Menu des presets : 4 presets + « Rack vide »", menuItems);
+        check (bar.getHeight() == aura::ui::TopBar::kHeight && bar.getPresetButton().isVisible() && bar.getCopyButton().isVisible(), "Barre du haut : deuxième rangée (presets, A / B, utilitaire, latence) visible");
+
+        // Cohérence : tous les modules dans la disposition, les menus, le dictionnaire et la persistance.
+        std::puts ("\n-- cohérence des 12 modules");
+        bool dictOk = true;
+        for (std::size_t k = 0; k < (std::size_t) aura::ui::i18n::Key::count; ++k)
+            for (std::size_t l = 0; l < (std::size_t) aura::ui::i18n::Lang::count; ++l)
+                dictOk = dictOk && std::strlen (aura::ui::i18n::kTable[k][l]) > 0;
+        check (dictOk, "Dictionnaire FR / EN : aucune entrée vide");
+        bool described = true, accented = true, named = true;
+        for (int t = 1; t < aura::kNumModuleTypes; ++t)
+        {
+            const auto type = (ModuleType) t;
+            described = described && aura::ui::i18n::descriptionKey (type) != aura::ui::i18n::Key::modNone;
+            accented = accented && aura::ui::colours::accentFor (type) != aura::ui::colours::stroke;
+            named = named && std::strlen (aura::moduleInfo (type).name) > 0 && ! aura::moduleInfo (type).params.empty();
+        }
+        check (described && accented && named, "Chaque module : nom, paramètres, description FR / EN et couleur d'accent");
+
+        // Les 12 modules posés (en deux fois, 10 slots), affichés en grand : façade ou cartes génériques, sans erreur, état restauré.
+        std::unique_ptr<AuraRackProcessor> all;
+        makeProc (all);
+        bool shownOk = true, restoredOk = true, renderOk = true;
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            for (int s = 0; s < aura::kNumSlots; ++s)
+                all->setSlotModule (s, (ModuleType) (1 + (pass * aura::kNumSlots + s) % (aura::kNumModuleTypes - 1)));
+            for (int b = 0; b < 4; ++b) renderAudio (*all, rate, 12);
+            juce::AudioBuffer<double> chk (4, 512); chk.clear(); juce::MidiBuffer midi2; all->processBlock (chk, midi2);
+            for (int ch = 0; ch < 2; ++ch) for (int n = 0; n < 512; ++n) renderOk = renderOk && std::isfinite (chk.getSample (ch, n));
+
+            AuraRackEditor ed (*all);
+            ed.setBounds (0, 0, 1280, 780);
+            for (int s = 0; s < aura::kNumSlots; ++s)
+            {
+                ed.getContent().selectSlot (s);
+                for (int i = 0; i < 3; ++i) ed.tickForTesting (1.0f / 60.0f);
+                shownOk = shownOk && ed.getContent().inspector.getSelected() == s && all->getSlotModule (s) != ModuleType::none;
+            }
+            juce::MemoryBlock b2; all->getStateInformation (b2);
+            std::unique_ptr<AuraRackProcessor> back; makeProc (back);
+            back->setStateInformation (b2.getData(), (int) b2.getSize());
+            for (int s = 0; s < aura::kNumSlots; ++s) restoredOk = restoredOk && back->getSlotModule (s) == all->getSlotModule (s);
+        }
+        check (shownOk && restoredOk && renderOk, "Les 12 modules : posés, affichés dans la zone haute, rendu fini, session restaurée à l'identique");
     }
 
     std::printf ("\n%d / %d vérifications réussies\n", checks - failures, checks);

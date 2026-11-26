@@ -3,13 +3,15 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <map>
 #include <optional>
 
 namespace
 {
-    constexpr int kStateVersion = 3;   // 3 : E9DS, réglages d'interface (langue, aide, LUFS) ; 2 : AuraComp à 3 algorithmes, 10 paramètres génériques
+    constexpr int kStateVersion = 4;   // 4 : auto-gain, utilitaire stéréo, A / B, presets, V9C3 / V9P2 ; 3 : E9DS, réglages d'interface (langue, aide, LUFS) ; 2 : AuraComp à 3 algorithmes, 10 paramètres génériques
     const juce::Identifier kOrderProperty { "order" };
     const juce::Identifier kVersionProperty { "auraRackVersion" };
+    const juce::Identifier kAbActive { "abActive" }, kPresetIndex { "presetIndex" }, kAbNode { "AB" }, kSnapNode { "SNAP" }, kValueNode { "V" };
     const juce::Identifier kUiLanguage { "uiLanguage" }, kUiInfo { "uiInfo" }, kUiLoudness { "uiLoudness" }, kUiSlot { "uiSlot" };
 
     juce::String orderToString (const aura::SlotOrder& o)
@@ -71,12 +73,14 @@ void AuraRackProcessor::bindEngine()
         src.mix     = raw (params::mix (s));
         src.inTrim  = raw (params::inTrim (s));
         src.outTrim = raw (params::outTrim (s));
+        src.autoGain = raw (params::autoGainSlot (s));
         for (int p = 0; p < kMaxModuleParams; ++p)
             src.params[(std::size_t) p] = raw (params::generic (s, p));
         engine.bindSlot (s, src);
     }
 
-    engine.bindGlobal ({ raw (params::inGain), raw (params::outGain), raw (params::masterMix), raw (params::scSource) });
+    engine.bindGlobal ({ raw (params::inGain), raw (params::outGain), raw (params::masterMix), raw (params::scSource),
+                         raw (params::autoGain), raw (params::width), raw (params::bassMono), raw (params::mono) });
 }
 
 //==============================================================================
@@ -296,11 +300,178 @@ void AuraRackProcessor::setUiSettings (const UiSettings& u)
 }
 
 //==============================================================================
+// Instantanés, A / B, presets
+//==============================================================================
+AuraRackProcessor::RackSnapshot AuraRackProcessor::captureSnapshot() const
+{
+    RackSnapshot snap;
+    for (auto* p : getParameters())
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            snap.values.emplace_back (withId->paramID, withId->getValue());
+    snap.order = engine.getOrder();
+    snap.valid = true;
+    return snap;
+}
+
+void AuraRackProcessor::applySnapshot (const RackSnapshot& snap)
+{
+    std::lock_guard<std::mutex> lock (stateMutex);
+    applySnapshotLocked (snap);
+}
+
+void AuraRackProcessor::applySnapshotLocked (const RackSnapshot& snap)
+{
+    if (! snap.valid) return;
+    auto setNormalised = [this] (const juce::String& id, float v)
+    {
+        if (auto* p = apvts.getParameter (id)) p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v));
+    };
+
+    // 1. Les types de module d'abord, installés sans remise aux valeurs par défaut ; 2. puis tous les réglages.
+    for (const auto& [id, v] : snap.values)
+        if (id.endsWith ("_type")) setNormalised (id, v);
+    syncModulesFromParameters (false);
+    for (const auto& [id, v] : snap.values)
+        if (! id.endsWith ("_type")) setNormalised (id, v);
+
+    if (aura::RackRouting::isValid (snap.order))
+    {
+        engine.setOrder (snap.order);
+        apvts.state.setProperty (kOrderProperty, orderToString (snap.order), nullptr);
+    }
+    setLatencySamples (engine.getRequestedLatency());
+}
+
+bool AuraRackProcessor::snapshotsEqual (const RackSnapshot& a, const RackSnapshot& b) noexcept
+{
+    if (a.valid != b.valid || a.values.size() != b.values.size() || a.order != b.order) return false;
+    for (std::size_t i = 0; i < a.values.size(); ++i)
+        if (a.values[i].first != b.values[i].first || std::abs (a.values[i].second - b.values[i].second) > 1.0e-5f) return false;
+    return true;
+}
+
+void AuraRackProcessor::selectAb (int which)
+{
+    if (which < 0 || which > 1) return;
+    std::lock_guard<std::mutex> lock (stateMutex);
+    if (which == abActive) return;
+    abSlots[(std::size_t) abActive] = captureSnapshot();     // garde les retouches de l'emplacement quitté
+    if (! abSlots[(std::size_t) which].valid)
+        abSlots[(std::size_t) which] = abSlots[(std::size_t) abActive];   // B démarre comme A
+    applySnapshotLocked (abSlots[(std::size_t) which]);
+    abActive = which;
+    apvts.state.setProperty (kAbActive, abActive, nullptr);
+}
+
+void AuraRackProcessor::copyToOtherAb()
+{
+    std::lock_guard<std::mutex> lock (stateMutex);
+    abSlots[(std::size_t) (1 - abActive)] = captureSnapshot();
+}
+
+AuraRackProcessor::RackSnapshot AuraRackProcessor::buildPresetSnapshot (const aura::presets::Preset& preset) const
+{
+    using namespace aura;
+    RackSnapshot snap;
+    std::map<juce::String, float> values;
+    for (auto* p : getParameters())
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            values[withId->paramID] = withId->getDefaultValue();
+
+    auto setPlain = [this, &values] (const juce::String& id, double plain)
+    {
+        if (auto* p = apvts.getParameter (id)) values[id] = p->convertTo0to1 ((float) plain);
+    };
+    const auto& g = preset.global;
+    setPlain (params::inGain, g.inGain);
+    setPlain (params::outGain, g.outGain);
+    setPlain (params::autoGain, g.autoGain ? 1.0 : 0.0);
+    setPlain (params::width, g.widthPercent);
+    setPlain (params::bassMono, g.bassMono);
+    setPlain (params::mono, g.mono ? 1.0 : 0.0);
+
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        const presets::SlotDef empty;
+        const auto& def = s < (int) preset.slots.size() ? preset.slots[(std::size_t) s] : empty;
+        const auto& info = moduleInfo (def.type);
+        setPlain (params::type (s), (double) (int) def.type);
+        for (int p = 0; p < kMaxModuleParams; ++p)
+            values[params::generic (s, p)] = p < (int) info.params.size() ? (float) info.params[(std::size_t) p].defaultNormalised() : 0.5f;
+        for (const auto& st : def.settings)
+            if (st.param >= 0 && st.param < (int) info.params.size())
+                values[params::generic (s, st.param)] = (float) info.params[(std::size_t) st.param].toNormalised (st.plain);
+        setPlain (params::mix (s), def.mixPercent >= 0.0 ? def.mixPercent : info.defaultMixPercent);
+        setPlain (params::autoGainSlot (s), def.autoGain ? 1.0 : 0.0);
+    }
+
+    for (auto* p : getParameters())
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
+            snap.values.emplace_back (withId->paramID, values[withId->paramID]);
+    snap.order = RackRouting::identity();
+    snap.valid = true;
+    return snap;
+}
+
+void AuraRackProcessor::loadFactoryPreset (int index)
+{
+    if (index < 0 || index >= getNumFactoryPresets()) return;
+    auto snap = buildPresetSnapshot (aura::presets::factory()[(std::size_t) index]);
+    std::lock_guard<std::mutex> lock (stateMutex);
+    applySnapshotLocked (snap);
+    presetIndex = index;
+    presetBaseline = std::move (snap);
+    apvts.state.setProperty (kPresetIndex, presetIndex, nullptr);
+}
+
+void AuraRackProcessor::clearRack()
+{
+    aura::presets::Preset empty { "Vide", "Empty", "", "", {}, {} };
+    auto snap = buildPresetSnapshot (empty);
+    std::lock_guard<std::mutex> lock (stateMutex);
+    applySnapshotLocked (snap);
+    presetIndex = -1;
+    presetBaseline = {};
+    apvts.state.setProperty (kPresetIndex, -1, nullptr);
+}
+
+bool AuraRackProcessor::isPresetModified() const
+{
+    if (presetIndex < 0 || ! presetBaseline.valid) return false;
+    return ! snapshotsEqual (captureSnapshot(), presetBaseline);
+}
+
+
+//==============================================================================
 void AuraRackProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    std::lock_guard<std::mutex> lock (stateMutex);
     auto state = apvts.copyState();
     state.setProperty (kOrderProperty, orderToString (engine.getOrder()), nullptr);
     state.setProperty (kVersionProperty, kStateVersion, nullptr);
+
+    // A / B : l'emplacement actif reflète l'état courant ; les deux sont enregistrés avec la session.
+    abSlots[(std::size_t) abActive] = captureSnapshot();
+    state.removeChild (state.getChildWithName (kAbNode), nullptr);
+    juce::ValueTree ab (kAbNode);
+    ab.setProperty (kAbActive, abActive, nullptr);
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto& snap = abSlots[(std::size_t) i];
+        if (! snap.valid) continue;
+        juce::ValueTree node (kSnapNode);
+        node.setProperty ("slot", i, nullptr);
+        node.setProperty (kOrderProperty, orderToString (snap.order), nullptr);
+        for (const auto& [id, v] : snap.values)
+        {
+            juce::ValueTree vt (kValueNode);
+            vt.setProperty ("id", id, nullptr);
+            vt.setProperty ("v", (double) v, nullptr);
+            node.appendChild (vt, nullptr);
+        }
+        ab.appendChild (node, nullptr);
+    }
+    state.appendChild (ab, nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -311,7 +482,26 @@ void AuraRackProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return;
 
     std::lock_guard<std::mutex> lock (stateMutex);
-    const auto tree = juce::ValueTree::fromXml (*xml);
+    auto tree = juce::ValueTree::fromXml (*xml);
+
+    // A / B : lus puis retirés de l'arbre des paramètres.
+    abSlots = {};
+    abActive = 0;
+    if (auto ab = tree.getChildWithName (kAbNode); ab.isValid())
+    {
+        abActive = juce::jlimit (0, 1, (int) ab.getProperty (kAbActive, 0));
+        for (auto node : ab)
+        {
+            const int slotIndex = juce::jlimit (0, 1, (int) node.getProperty ("slot", 0));
+            RackSnapshot snap;
+            for (auto vt : node)
+                snap.values.emplace_back (vt.getProperty ("id").toString(), (float) (double) vt.getProperty ("v", 0.0));
+            if (auto order = orderFromString (node.getProperty (kOrderProperty).toString())) snap.order = *order;
+            snap.valid = ! snap.values.empty();
+            abSlots[(std::size_t) slotIndex] = std::move (snap);
+        }
+        tree.removeChild (ab, nullptr);
+    }
     apvts.replaceState (tree);
 
     // Les paramètres génériques viennent de la session : on installe les modules sans les remettre par défaut.
@@ -323,6 +513,9 @@ void AuraRackProcessor::setStateInformation (const void* data, int sizeInBytes)
         engine.setOrder (aura::RackRouting::identity());
 
     engine.setLoudnessEnabled (getUiSettings().loudness);
+
+    presetIndex = juce::jlimit (-1, getNumFactoryPresets() - 1, (int) tree.getProperty (kPresetIndex, -1));
+    presetBaseline = presetIndex >= 0 ? buildPresetSnapshot (aura::presets::factory()[(std::size_t) presetIndex]) : RackSnapshot {};
     setLatencySamples (engine.getRequestedLatency());
 }
 

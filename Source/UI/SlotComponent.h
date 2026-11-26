@@ -65,6 +65,9 @@ private:
     juce::ComboBox typeBox;
     juce::ToggleButton bypassButton { "BYP" };
     std::unique_ptr<juce::ButtonParameterAttachment> bypassAttachment;
+    juce::ToggleButton agcButton { "AGC" };   // auto-gain du module (voir DSP/AutoGain.h) + correction acquise
+    std::unique_ptr<juce::ButtonParameterAttachment> agcAttachment;
+    float shownAgcDb = 1000.0f;
     GainReductionScope scope;
     std::array<ParamKnob, aura::kMaxModuleParams> knobs;
     ParamKnob mixKnob, inKnob, outKnob;

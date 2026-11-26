@@ -4,6 +4,7 @@
 #pragma once
 
 #include "Parameters.h"
+#include "Presets.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -58,6 +59,31 @@ public:
     /** Déplace un slot de la position `from` à la position `to` (indices dans l'ordre actuel). */
     void moveSlot (int fromPosition, int toPosition);
 
+    //==== Instantanés, A / B et presets (message thread) =================================
+    /** Tous les paramètres (valeurs normalisées par identifiant) + ordre des slots. Modules, réglages et ordre se
+        restaurent ensemble : c'est l'unité de base des comparaisons A / B et des presets. */
+    struct RackSnapshot
+    {
+        std::vector<std::pair<juce::String, float>> values;
+        aura::SlotOrder order = aura::RackRouting::identity();
+        bool valid = false;
+    };
+    RackSnapshot captureSnapshot() const;
+    void applySnapshot (const RackSnapshot&);
+
+    /** A / B : deux configurations complètes du rack. 0 = A, 1 = B. Bascule en un clic ; B part d'une copie de A. */
+    int getAbActive() const noexcept { return abActive; }
+    bool isAbStored (int which) const noexcept { return which >= 0 && which < 2 && abSlots[(std::size_t) which].valid; }
+    void selectAb (int which);
+    void copyToOtherAb();   // copie la configuration courante dans l'autre emplacement
+
+    /** Presets d'usine (Presets.h). setPresetIndex(-1) = aucun. */
+    static int getNumFactoryPresets() noexcept { return (int) aura::presets::factory().size(); }
+    void loadFactoryPreset (int index);
+    int getPresetIndex() const noexcept { return presetIndex; }
+    bool isPresetModified() const;   // le rack s'écarte-t-il du preset chargé ?
+    void clearRack();                // rack vide (tous les slots à « Vide », réglages globaux par défaut)
+
     //==== Réglages d'interface (sauvegardés avec la session, jamais automatisables) =====
     struct UiSettings
     {
@@ -103,6 +129,15 @@ private:
     std::atomic<float> cpuLoad { 0.0f };
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<bool> sidechainConnected { false };
+
+    RackSnapshot buildPresetSnapshot (const aura::presets::Preset&) const;
+    void applySnapshotLocked (const RackSnapshot&);
+    static bool snapshotsEqual (const RackSnapshot&, const RackSnapshot&) noexcept;
+
+    std::array<RackSnapshot, 2> abSlots;
+    int abActive = 0;
+    int presetIndex = -1;
+    RackSnapshot presetBaseline;
 
     std::mutex stateMutex;   // setStateInformation <-> timer (jamais le thread audio)
 

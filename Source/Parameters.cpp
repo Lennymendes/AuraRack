@@ -29,6 +29,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (SlotTypeProvid
                                                              AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (formatPercent)));
     global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { scSource, 1 }, "Sidechain Source",
                                                               StringArray { "Bus Sidechain", "Entree du rack" }, 0));
+    global->addChild (std::make_unique<AudioParameterBool> (ParameterID { autoGain, 1 }, "Auto Gain (Rack)", false));
+    global->addChild (std::make_unique<AudioParameterFloat> (ParameterID { width, 1 }, "Stereo Width", NormalisableRange<float> (0.0f, 200.0f), 100.0f,
+                                                             AudioParameterFloatAttributes().withLabel ("%").withStringFromValueFunction (formatPercent)));
+    global->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bassMono, 1 }, "Bass Mono",
+                                                              StringArray { "Off", "60 Hz", "100 Hz", "150 Hz", "250 Hz" }, 0));
+    global->addChild (std::make_unique<AudioParameterBool> (ParameterID { mono, 1 }, "Mono", false));
     layout.add (std::move (global));
 
     // Liste des types de module (index = ModuleType).
@@ -50,6 +56,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (SlotTypeProvid
                                                                 AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction (formatDb)));
         group->addChild (std::make_unique<AudioParameterFloat> (ParameterID { outTrim (s), 1 }, n + " Out Trim", trimRange(), 0.0f,
                                                                 AudioParameterFloatAttributes().withLabel ("dB").withStringFromValueFunction (formatDb)));
+
+        group->addChild (std::make_unique<AudioParameterBool> (ParameterID { autoGainSlot (s), 1 }, n + " Auto Gain", false));
 
         for (int p = 0; p < kMaxModuleParams; ++p)
         {

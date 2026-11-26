@@ -17,7 +17,9 @@
 
 #pragma once
 
+#include "../DSP/AutoGain.h"
 #include "../DSP/LoudnessMeter.h"
+#include "../DSP/StereoUtility.h"
 #include "../DSP/ModuleRegistry.h"
 
 #include <atomic>
@@ -85,6 +87,7 @@ struct SlotParameterSources
     const std::atomic<float>* mix     = nullptr;   // 0 … 100 %
     const std::atomic<float>* inTrim  = nullptr;   // -24 … +24 dB
     const std::atomic<float>* outTrim = nullptr;   // -24 … +24 dB
+    const std::atomic<float>* autoGain = nullptr;  // 0 / 1 : compensation de gain du module (voir DSP/AutoGain.h)
     std::array<const std::atomic<float>*, kMaxModuleParams> params {};   // normalisés [0, 1]
 };
 
@@ -94,6 +97,10 @@ struct GlobalParameterSources
     const std::atomic<float>* outputGain = nullptr;   // dB
     const std::atomic<float>* masterMix  = nullptr;   // %
     const std::atomic<float>* sidechainSource = nullptr;   // 0 = bus Sidechain VST3, 1 = entrée du rack
+    const std::atomic<float>* autoGain  = nullptr;   // 0 / 1 : compensation de gain du rack entier (sortie ≈ entrée en niveau RMS)
+    const std::atomic<float>* width     = nullptr;   // 0 … 200 % (Side)
+    const std::atomic<float>* bassMono  = nullptr;   // indice 0 … 4 (Off, 60, 100, 150, 250 Hz)
+    const std::atomic<float>* mono      = nullptr;   // 0 / 1
 };
 
 enum class SidechainSource { externalBus = 0, rackInput = 1 };
@@ -190,6 +197,9 @@ public:
         std::array<std::atomic<float>, kNumSlots> gainReductionDb {};
         mutable std::array<std::atomic<float>, kNumSlots> slotStatus {};   // crête de sortie du module (voyant), lue par exchange(0)
         std::array<std::atomic<float>, kNumSlots> slotAux {};   // valeur d'affichage du module (seuil W9BMK1, niveau VU L9A) : dernière valeur
+        std::array<std::atomic<float>, kNumSlots> slotAgcDb {};   // correction acquise par l'auto-gain de chaque slot (dB)
+        std::atomic<float> rackAgcDb { 0.0f };                    // idem pour le rack entier
+        std::atomic<float> correlation { 1.0f };                  // corrélation de phase L/R en sortie (-1 … +1), lissée sur ~0,3 s
         std::atomic<int> activeLatency { 0 };
         std::atomic<bool> sidechainActive { false };
     };
@@ -235,6 +245,7 @@ private:
         dsp::LinearRamp active;    // 1 = actif, 0 = bypass (5 ms)
         dsp::LinearRamp swap;      // poids du nouveau module (5 ms)
         dsp::OnePoleSmoother mix, inTrim, outTrim;
+        dsp::LevelMatcher agc;
         CompensatedDry dry;
     };
 
@@ -278,6 +289,9 @@ private:
     dsp::LinearRamp reorderGain;
 
     dsp::OnePoleSmoother inputGain, outputGain, masterMix;
+    dsp::LevelMatcher rackAgc;
+    dsp::StereoUtility utility;
+    double corrLR = 0.0, corrLL = 0.0, corrRR = 0.0;
     CompensatedDry masterDry;
 
     // Tampons de travail (alloués dans prepare).

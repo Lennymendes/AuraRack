@@ -718,22 +718,23 @@ struct TestParams
 {
     struct Slot
     {
-        std::atomic<float> bypass { 0.0f }, mix { 100.0f }, inTrim { 0.0f }, outTrim { 0.0f };
+        std::atomic<float> bypass { 0.0f }, mix { 100.0f }, inTrim { 0.0f }, outTrim { 0.0f }, agc { 0.0f };
         std::array<std::atomic<float>, kMaxModuleParams> p {};
     };
     std::array<Slot, kNumSlots> slots;
     std::atomic<float> inGain { 0.0f }, outGain { 0.0f }, masterMix { 100.0f }, scSource { 0.0f };
+    std::atomic<float> rackAgc { 0.0f }, width { 100.0f }, bassMono { 0.0f }, mono { 0.0f };
 
     void bind (RackEngine& e)
     {
         for (int s = 0; s < kNumSlots; ++s)
         {
             auto& sl = slots[(std::size_t) s];
-            SlotParameterSources src { &sl.bypass, &sl.mix, &sl.inTrim, &sl.outTrim, {} };
+            SlotParameterSources src { &sl.bypass, &sl.mix, &sl.inTrim, &sl.outTrim, &sl.agc, {} };
             for (int i = 0; i < kMaxModuleParams; ++i) src.params[(std::size_t) i] = &sl.p[(std::size_t) i];
             e.bindSlot (s, src);
         }
-        e.bindGlobal ({ &inGain, &outGain, &masterMix, &scSource });
+        e.bindGlobal ({ &inGain, &outGain, &masterMix, &scSource, &rackAgc, &width, &bassMono, &mono });
     }
 
     void setType (RackEngine& e, int slot, ModuleType t)
@@ -2273,13 +2274,220 @@ static void testLookahead()
     }
 }
 
+//==============================================================================
+static double rmsOf (const Buf& x, std::size_t a, std::size_t b)
+{
+    double s = 0.0;
+    for (std::size_t i = a; i < b; ++i) s += x[i] * x[i];
+    return std::sqrt (s / (double) (b - a));
+}
+
+static void testAutoGain()
+{
+    std::puts ("\n== 21. Auto-gain (par module et rack)");
+    const double fs = 48000.0;
+    const std::size_t sec = (std::size_t) fs;
+
+    auto runSlot = [&] (double eqOutDb, bool agc, double seconds, double ampDb, TestParams& p, RackEngine& e, Buf& L, Buf& R, std::size_t from = 0)
+    {
+        p.setType (e, 0, ModuleType::eq);
+        p.setPlain (0, ModuleType::eq, AuraEQ::outGain, eqOutDb);
+        p.slots[0].agc = agc ? 1.0f : 0.0f;
+        const auto n = (std::size_t) (seconds * fs);
+        if (L.size() < from + n) { L.resize (from + n); R.resize (from + n); }
+        for (std::size_t i = 0; i < n; ++i) L[from + i] = R[from + i] = std::pow (10.0, ampDb / 20.0) * std::sin (dsp::kTwoPi * 1000.0 * (double) (from + i) / fs);
+        runEngine (e, L, R, from, from + n, 256);
+    };
+
+    {   // +9 dB de sortie : l'auto-gain ramène le niveau à celui de l'entrée (±0,3 dB), sans l'option : +9 dB.
+        RackEngine e; TestParams p; p.bind (e); e.prepare (fs, 256);
+        Buf L, R;
+        runSlot (9.0, false, 6.0, -20.0, p, e, L, R);
+        const double plainDb = dbOf (rmsOf (L, 5 * sec, 6 * sec)) - dbOf (std::pow (10.0, -20.0 / 20.0) / std::sqrt (2.0));
+        check (std::abs (plainDb - 9.0) < 0.1, "Sans auto-gain : +9 dB en sortie (module seul)", plainDb, "dB");
+
+        RackEngine e2; TestParams p2; p2.bind (e2); e2.prepare (fs, 256);
+        Buf L2, R2;
+        runSlot (9.0, true, 10.0, -20.0, p2, e2, L2, R2);
+        const double ref = dbOf (std::pow (10.0, -20.0 / 20.0) / std::sqrt (2.0));
+        const double after = dbOf (rmsOf (L2, 9 * sec, 10 * sec)) - ref;
+        check (std::abs (after) < 0.3, "Auto-gain : le niveau de sortie revient à celui de l'entrée (±0,3 dB après 10 s)", after, "dB");
+        check (std::abs (e2.getMeters().slotAgcDb[0].load() + 9.0f) < 0.3f, "Correction publiée ≈ -9 dB", e2.getMeters().slotAgcDb[0].load(), "dB");
+    }
+    {   // Changement de réglage en marche : le niveau se recale (« ratio / saturation » changent le niveau, l'option le suit).
+        RackEngine e; TestParams p; p.bind (e); e.prepare (fs, 256);
+        Buf L, R;
+        runSlot (6.0, true, 8.0, -20.0, p, e, L, R);
+        p.setPlain (0, ModuleType::eq, AuraEQ::outGain, -6.0);
+        const auto from = L.size();
+        runSlot (-6.0, true, 10.0, -20.0, p, e, L, R, from);
+        const double ref = dbOf (std::pow (10.0, -20.0 / 20.0) / std::sqrt (2.0));
+        const double after = dbOf (rmsOf (L, from + 9 * sec, from + 10 * sec)) - ref;
+        check (std::abs (after) < 0.3, "Réglage changé de +6 à -6 dB pendant la lecture : niveau recalé à ±0,3 dB en 10 s", after, "dB");
+    }
+    {   // Plafond ±12 dB.
+        RackEngine e; TestParams p; p.bind (e); e.prepare (fs, 256);
+        Buf L, R;
+        runSlot (20.0, true, 8.0, -40.0, p, e, L, R);
+        check (std::abs (e.getMeters().slotAgcDb[0].load() + 12.0f) < 0.05f, "Correction limitée à -12 dB (module à +20 dB)", e.getMeters().slotAgcDb[0].load(), "dB");
+    }
+    {   // Silence et creux : correction gelée. Bypass : gain acquis conservé. Retrait de l'option : retour exact à l'identité.
+        RackEngine e; TestParams p; p.bind (e); e.prepare (fs, 256);
+        Buf L, R;
+        runSlot (9.0, true, 8.0, -20.0, p, e, L, R);
+        const float acquired = e.getMeters().slotAgcDb[0].load();
+        const auto from = L.size();
+        L.resize (from + 5 * sec, 0.0); R = L;
+        for (std::size_t i = 0; i < 5 * sec; ++i) L[from + i] = R[from + i] = 1.0e-5 * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs);   // -100 dBFS
+        runEngine (e, L, R, from, from + 5 * sec, 256);
+        check (std::abs (e.getMeters().slotAgcDb[0].load() - acquired) < 0.01f, "Silence de 5 s : correction gelée (pas de remontée du bruit)", e.getMeters().slotAgcDb[0].load() - acquired, "dB");
+
+        p.slots[0].bypass = 1.0f;
+        const auto from2 = L.size();
+        L.resize (from2 + 3 * sec); R.resize (L.size());
+        for (std::size_t i = 0; i < 3 * sec; ++i) L[from2 + i] = R[from2 + i] = 0.1 * std::sin (dsp::kTwoPi * 440.0 * (double) i / fs);
+        runEngine (e, L, R, from2, from2 + 3 * sec, 256);
+        p.slots[0].bypass = 0.0f;
+        check (std::abs (e.getMeters().slotAgcDb[0].load() - acquired) < 0.01f, "Bypass : le gain acquis est conservé", e.getMeters().slotAgcDb[0].load() - acquired, "dB");
+
+        p.slots[0].agc = 0.0f;   // retire l'option
+        const auto from3 = L.size();
+        L.resize (from3 + sec); R.resize (L.size());
+        for (std::size_t i = 0; i < sec; ++i) L[from3 + i] = R[from3 + i] = 0.1 * std::sin (dsp::kTwoPi * 440.0 * (double) i / fs);
+        runEngine (e, L, R, from3, from3 + sec, 256);
+        check (e.getMeters().slotAgcDb[0].load() == 0.0f, "Option retirée : correction ramenée à 0 dB", e.getMeters().slotAgcDb[0].load(), "dB");
+    }
+    {   // Option désactivée : sortie bit-identique à un moteur qui ne connaît pas l'option (défaut), et zéro CPU de mesure.
+        RackEngine a, b; TestParams pa, pb; pa.bind (a); pb.bind (b); a.prepare (fs, 256); b.prepare (fs, 256);
+        pa.setType (a, 0, ModuleType::eq); pb.setType (b, 0, ModuleType::eq);
+        pa.setPlain (0, ModuleType::eq, AuraEQ::pkGain, 5.0); pb.setPlain (0, ModuleType::eq, AuraEQ::pkGain, 5.0);
+        pa.slots[0].agc = 0.0f; pa.rackAgc = 0.0f;
+        Buf L = sine (48000, 1000.0, fs, 0.2), R = L, L2 = L, R2 = L;
+        runEngine (a, L, R, 0, L.size(), 256); runEngine (b, L2, R2, 0, L2.size(), 256);
+        check (L == L2 && R == R2, "Auto-gain désactivé : sortie bit-identique");
+    }
+    {   // Rack entier.
+        RackEngine e; TestParams p; p.bind (e); e.prepare (fs, 256);
+        p.setType (e, 0, ModuleType::eq); p.setPlain (0, ModuleType::eq, AuraEQ::outGain, 9.0);
+        p.setType (e, 3, ModuleType::eq); p.setPlain (3, ModuleType::eq, AuraEQ::outGain, 3.0);
+        p.rackAgc = 1.0f;
+        Buf L = sine (12 * sec, 1000.0, fs, 0.1), R = L;
+        runEngine (e, L, R, 0, L.size(), 256);
+        const double after = dbOf (rmsOf (L, 11 * sec, 12 * sec)) - dbOf (0.1 / std::sqrt (2.0));
+        check (std::abs (after) < 0.3 && std::abs (e.getMeters().rackAgcDb.load() + 12.0f) < 0.3f, "Auto-gain du rack : +12 dB cumulés ramenés à ±0,3 dB (correction -12 dB)", after, "dB");
+    }
+}
+
+static void testStereoUtility()
+{
+    std::puts ("\n== 22. Utilitaire Stéréo / Largeur / Mono grave");
+    auto setup = [] (double fs, double width, int bass, bool mono, TestParams& p, RackEngine& e)
+    {
+        p.bind (e); e.prepare (fs, 256);
+        p.width = (float) width; p.bassMono = (float) bass; p.mono = mono ? 1.0f : 0.0f;
+    };
+    auto stereoSine = [] (double fs, double fL, double fR, double aL, double aR, std::size_t n, double phaseR = 0.0)
+    {
+        std::pair<Buf, Buf> io { sine (n, fL, fs, aL), sine (n, fR, fs, aR, phaseR) };
+        return io;
+    };
+    const double fs = 48000.0;
+    {   // Identité bit-à-bit.
+        RackEngine e; TestParams p; setup (fs, 100.0, 0, false, p, e);
+        auto [L, R] = stereoSine (fs, 440.0, 1330.0, 0.3, 0.2, 48000);
+        const Buf l0 = L, r0 = R;
+        runEngine (e, L, R, 0, L.size(), 256);
+        check (L == l0 && R == r0, "Width 100 %, Bass Mono Off, Mono Off : sortie bit-identique à l'entrée");
+    }
+    {   // Width 0 / 200, Mono.
+        auto level = [&] (double width, bool mono)
+        {
+            RackEngine e; TestParams p; setup (fs, width, 0, mono, p, e);
+            // Mid = 0,2 sin(1 kHz), Side = 0,1 sin(3 kHz)
+            Buf L (48000), R (48000);
+            for (std::size_t i = 0; i < L.size(); ++i)
+            {
+                const double t = (double) i / fs, m = 0.2 * std::sin (dsp::kTwoPi * 1000.0 * t), sd = 0.1 * std::sin (dsp::kTwoPi * 3000.0 * t);
+                L[i] = m + sd; R[i] = m - sd;
+            }
+            runEngine (e, L, R, 0, L.size(), 256);
+            Buf M (L.size()), S (L.size());
+            for (std::size_t i = 0; i < L.size(); ++i) { M[i] = 0.5 * (L[i] + R[i]); S[i] = 0.5 * (L[i] - R[i]); }
+            return std::pair { amplitudeAt (M, 24000, 24000, 1000.0, fs), amplitudeAt (S, 24000, 24000, 3000.0, fs) };
+        };
+        const auto w0 = level (0.0, false), w200 = level (200.0, false), w50 = level (50.0, false), mo = level (100.0, true);
+        check (w0.second < 1.0e-6 && std::abs (w0.first - 0.2) < 1.0e-6, "Width 0 % : Side nul, Mid intact (mono)", w0.second);
+        check (std::abs (w200.second - 0.2) < 1.0e-4 && std::abs (w200.first - 0.2) < 1.0e-6, "Width 200 % : Side doublé, Mid intact", w200.second);
+        check (std::abs (w50.second - 0.05) < 1.0e-4, "Width 50 % : Side divisé par deux", w50.second);
+        check (mo.second < 1.0e-6 && std::abs (mo.first - 0.2) < 1.0e-6, "Mono : Side nul, Mid intact", mo.second);
+    }
+    {   // Mono grave : Side filtré LR4, Mid intact, même résultat à 44,1 et 384 kHz.
+        double att[2], atFc[2], hi[2];
+        int k = 0;
+        for (double rate : { 44100.0, 384000.0 })
+        {
+            auto measure = [&] (double f, double wantFc)
+            {
+                RackEngine e; TestParams p; setup (rate, 100.0, wantFc == 150.0 ? 3 : 2, false, p, e);
+                const auto n = (std::size_t) (rate * 1.5);
+                Buf L = sine (n, f, rate, 0.2), R = L;
+                for (auto& v : R) v = -v;   // Side pur
+                const Buf in = L;
+                runEngine (e, L, R, 0, n, 256);
+                return dbOf (amplitudeAt (L, n / 2, n / 2, f, rate)) - dbOf (amplitudeAt (in, n / 2, n / 2, f, rate));
+            };
+            att[k] = measure (37.5, 150.0);     // 2 octaves sous 150 Hz : LR4 -> ≈ -48 dB
+            atFc[k] = measure (150.0, 150.0);   // à la coupure : -6 dB
+            hi[k] = measure (3000.0, 150.0);
+            ++k;
+        }
+        check (att[0] < -35.0 && att[1] < -35.0, "Mono grave 150 Hz : 37,5 Hz (Side pur) atténué de plus de 35 dB", att[1], "dB");
+        check (std::abs (atFc[0] + 6.02) < 0.3 && std::abs (atFc[1] + 6.02) < 0.3, "À la fréquence de coupure : -6 dB (Linkwitz-Riley), 44,1 et 384 kHz", atFc[1], "dB");
+        check (std::abs (hi[0]) < 0.05 && std::abs (hi[1]) < 0.05, "Au-dessus : Side intact (3 kHz)", hi[1], "dB");
+        check (std::abs (att[0] - att[1]) < 6.0, "Même profondeur de coupure à 44,1 et 384 kHz (±6 dB à -45 dB)", att[0] - att[1], "dB");
+        // Mid intact : un Mid grave identique sur L et R traverse sans changement.
+        RackEngine e; TestParams p; setup (fs, 100.0, 4, false, p, e);
+        Buf L = sine (48000, 40.0, fs, 0.3), R = L; const Buf in = L;
+        runEngine (e, L, R, 0, L.size(), 256);
+        double d = 0.0; for (std::size_t i = 4800; i < L.size(); ++i) d = std::max (d, std::abs (L[i] - in[i]));
+        check (d < 1.0e-12 && L == R, "Mid grave (L = R) à 40 Hz, Bass Mono 250 Hz : inchangé et toujours mono", d);
+    }
+    {   // Pas de clic : Mono, Width, Bass Mono commutés en lecture.
+        RackEngine e; TestParams p; setup (fs, 100.0, 0, false, p, e);
+        Buf L = sine (96000, 500.0, fs, 0.3), R = sine (96000, 500.0, fs, 0.3, 1.0);
+        runEngine (e, L, R, 0, 24000, 256);
+        p.mono = 1.0f;
+        runEngine (e, L, R, 24000, 48000, 256);
+        p.mono = 0.0f; p.bassMono = 2.0f; p.width = 150.0f;
+        runEngine (e, L, R, 48000, 96000, 256);
+        const double steady = maxStep (L, 10000, 20000);
+        check (maxStep (L, 24000, 26000) < 1.3 * steady && maxStep (L, 48000, 50000) < 1.5 * steady, "Mono / Width / Bass Mono commutés en lecture : sans clic", maxStep (L, 24000, 26000) / steady);
+    }
+    {   // Corrélation.
+        auto corr = [&] (double phaseR, bool independent)
+        {
+            RackEngine e; TestParams p; setup (fs, 100.0, 0, false, p, e);
+            Buf L (96000), R (96000);
+            PortableGauss g1 (1, 0.1), g2 (2, 0.1);
+            for (std::size_t i = 0; i < L.size(); ++i)
+            {
+                L[i] = g1();
+                R[i] = independent ? g2() : (phaseR > 3.0 ? -L[i] : L[i]);
+            }
+            runEngine (e, L, R, 0, L.size(), 256);
+            return e.getMeters().correlation.load();
+        };
+        check (corr (0.0, false) > 0.999f && corr (3.14, false) < -0.999f && std::abs (corr (0.0, true)) < 0.1f, "Corrélation L/R : +1 (mono), -1 (opposition), ≈ 0 (indépendants)", corr (0.0, true));
+    }
+}
+
 int main (int argc, char** argv)
 {
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness }, { "v9c3", testV9c3 }, { "v9p2", testV9p2 }, { "lookahead", testLookahead },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness }, { "v9c3", testV9c3 }, { "v9p2", testV9p2 }, { "lookahead", testLookahead }, { "autogain", testAutoGain }, { "utility", testStereoUtility },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)

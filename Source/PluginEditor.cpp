@@ -35,7 +35,7 @@ void AuraRackEditor::Content::applySettings (const AuraRackProcessor::UiSettings
     shown = u;
     settingsApplied = true;
 
-    if (languageChanged) { i18n::setLanguage (u.language); repaint(); }
+    if (languageChanged) { i18n::setLanguage (u.language); topBar.refreshLanguage(); repaint(); }
     if (infoChanged)     { strip.setInfoMode (u.info); topBar.setInfoMode (u.info); }
     if (lufsChanged)     { loudness.setVisible (u.loudness); resized(); }
     if (slotChanged)     { inspector.setSelected (u.selectedSlot); strip.setSelected (u.selectedSlot); repaint (inspectorCaption); }

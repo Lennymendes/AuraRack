@@ -208,6 +208,23 @@ int main (int argc, char** argv)
     for (std::size_t i = 0; i < n; ++i) diffReset = std::max (diffReset, std::abs (a[i] - e[i]));
     check (diffReset < 1e-9, "reset() de l'hôte : état vidé, rendu identique", diffReset);
 
+    // Utilitaire stéréo et auto-gain exposés à l'hôte : paramètres présents, Mono effectif en sortie du VST3.
+    check (findParam (*plugin, "Auto Gain (Rack)") != nullptr && findParam (*plugin, "Stereo Width") != nullptr && findParam (*plugin, "Bass Mono") != nullptr
+               && findParam (*plugin, "Mono") != nullptr && findParam (*plugin, "Slot 1 Auto Gain") != nullptr && findParam (*plugin, "Slot 10 Auto Gain") != nullptr,
+           "Paramètres hôte : Auto Gain (rack et slots), Stereo Width, Bass Mono, Mono");
+    setParam (*plugin, "Mono", 1.0f);
+    std::vector<double> ml (n), mr (n);
+    for (std::size_t i = 0; i < n; ++i) { ml[i] = 0.2 * std::sin (0.01 * (double) i); mr[i] = 0.2 * std::sin (0.013 * (double) i + 1.0); }
+    for (int pass = 0; pass < 12; ++pass)   // le lissage (20 ms) doit se terminer
+    {
+        for (std::size_t i = 0; i < n; ++i) { ml[i] = 0.2 * std::sin (0.01 * (double) i); mr[i] = 0.2 * std::sin (0.013 * (double) i + 1.0); }
+        render (*plugin, ml, mr, nullptr, channels);
+    }
+    double asym = 0.0;
+    for (std::size_t i = n / 2; i < n; ++i) asym = std::max (asym, std::abs (ml[i] - mr[i]));
+    check (asym < 1.0e-9, "Mono (hôte VST3) : sortie L = R (écart < 1e-9 après le lissage de 20 ms)", asym);
+    setParam (*plugin, "Mono", 0.0f);
+
     fresh->releaseResources();
     fresh.reset();
     plugin->releaseResources();

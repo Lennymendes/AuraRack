@@ -9,7 +9,7 @@
 namespace aura::ui
 {
 /** Potentiomètre compact : bouton + nom + valeur sur deux lignes. */
-class BarKnob final : public juce::Component
+class BarKnob final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     BarKnob (juce::RangedAudioParameter&, const juce::String& name);
@@ -57,15 +57,61 @@ public:
     }
 };
 
+/** Bouton plat de la barre d'outils : texte, état « actif » (accent), chevron optionnel (menu). */
+class ToolButton final : public juce::Button
+{
+public:
+    explicit ToolButton (const juce::String& name) : juce::Button (name) {}
+
+    void setActive (bool a) { if (a != active) { active = a; repaint(); } }
+    void setLabel (const juce::String& t) { if (t != label) { label = t; repaint(); } }
+    void setChevron (bool c) { chevron = c; }
+    void setAccent (juce::Colour c) { accent = c; }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (active ? accent.withAlpha (0.20f) : (down ? colours::panelHigh : (highlighted ? colours::panelHigh.brighter (0.06f) : colours::panelHigh)));
+        g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (active ? accent : colours::stroke);
+        g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, active ? 1.4f : 1.0f);
+        g.setColour (active ? colours::text : (highlighted ? colours::text : colours::textDim));
+        g.setFont (NextLookAndFeel::font (12.0f, true));
+        auto t = getLocalBounds().reduced (8, 0);
+        if (chevron)
+        {
+            auto c = t.removeFromRight (14).toFloat();
+            juce::Path p;
+            p.addTriangle (c.getCentreX() - 4.0f, c.getCentreY() - 2.0f, c.getCentreX() + 4.0f, c.getCentreY() - 2.0f, c.getCentreX(), c.getCentreY() + 3.0f);
+            g.fillPath (p);
+        }
+        g.drawText (label, t, chevron ? juce::Justification::centredLeft : juce::Justification::centred, true);
+    }
+
+private:
+    juce::String label;
+    bool active = false, chevron = false;
+    juce::Colour accent { 0xff6aa6ff };
+};
+
 class TopBar final : public juce::Component
 {
 public:
+    static constexpr int kRow1Height = 62, kHeight = 96;
+
     explicit TopBar (AuraRackProcessor&);
 
     /** Mode « infos » : info-bulles sur les éléments de la barre. */
     void setInfoMode (bool on);
 
     void tick (float dtSeconds);
+    void refreshLanguage() noexcept { shownPreset = -2; }   // le libellé du preset suit la langue
+
+    /** Pour les tests : ouvre / lit les contrôles de la deuxième rangée. */
+    juce::PopupMenu buildPresetMenu() const;
+    ToolButton& getAbButton (int which) { return which == 0 ? abA : abB; }
+    ToolButton& getCopyButton() { return abCopy; }
+    ToolButton& getPresetButton() { return presetButton; }
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -74,6 +120,20 @@ private:
 
     BarKnob inputKnob, outputKnob, mixKnob;
     GearButton gearButton;
+
+    // Rangée 2 : presets, A / B, auto-gain du rack, utilitaire stéréo, latence totale.
+    ToolButton presetButton { "preset" }, abA { "A" }, abB { "B" }, abCopy { "copy" };
+    juce::ToggleButton rackAgcToggle { "AUTO GAIN" }, monoToggle { "MONO" };
+    BarKnob widthKnob;
+    juce::ComboBox bassBox;
+    std::unique_ptr<juce::ButtonParameterAttachment> rackAgcAttachment, monoAttachment;
+    std::unique_ptr<juce::ComboBoxParameterAttachment> bassAttachment;
+    juce::Rectangle<int> row2, bassCaption, corrArea, latencyArea;
+    int shownAb = -1, shownPreset = -2, presetClock = 0;
+    bool shownModified = false;
+    float correlation = 1.0f;
+    int shownLatencyTotal = -1;
+    void refreshToolTexts();
     juce::ComboBox sidechainBox;
     std::unique_ptr<juce::ComboBoxParameterAttachment> sidechainAttachment;
 

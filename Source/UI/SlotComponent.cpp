@@ -32,6 +32,11 @@ SlotComponent::SlotComponent (int slotIndex, AuraRackProcessor& p, SlotDragHost&
     bypassAttachment = std::make_unique<juce::ButtonParameterAttachment> (*apvts.getParameter (aura::params::bypass (slot)), bypassButton, nullptr);
     addAndMakeVisible (bypassButton);
 
+    agcButton.setClickingTogglesState (true);
+    agcButton.setColour (juce::ToggleButton::tickColourId, levelOk);
+    agcAttachment = std::make_unique<juce::ButtonParameterAttachment> (*apvts.getParameter (aura::params::autoGainSlot (slot)), agcButton, nullptr);
+    addAndMakeVisible (agcButton);
+
     addAndMakeVisible (scope);
 
     for (int i = 0; i < aura::kMaxModuleParams; ++i)
@@ -118,6 +123,7 @@ void SlotComponent::applyVisibility()
     inKnob.setVisible (hasModule && ! plate);                // le W9BMK1 a son propre Input / Output : pas de doublon
     outKnob.setVisible (hasModule && ! plate);
     bypassButton.setVisible (hasModule && ! plate);
+    agcButton.setVisible (hasModule);
     scope.setVisible (hasModule && ! plate && hasGainReduction (shownType));
     resized();
     repaint();
@@ -129,6 +135,17 @@ void SlotComponent::tick (float dt)
         typeChanged();
     else if (aura::moduleInfo (shownType).variantParam >= 0)
         applyVisibility();   // le choix d'algorithme change les potentiomètres affichés
+
+    // Auto-gain : le libellé porte la correction acquise (ex. « AGC -3.2 »).
+    {
+        const bool on = agcButton.getToggleState();
+        const float db = on ? processor.getMeters().slotAgcDb[(std::size_t) slot].load (std::memory_order_relaxed) : 0.0f;
+        if (std::abs (db - shownAgcDb) > 0.05f)
+        {
+            shownAgcDb = db;
+            agcButton.setButtonText (on && inspector ? "AGC " + juce::String (db, 1) : juce::String ("AGC"));
+        }
+    }
 
     const bool nowBypassed = bypassButton.getToggleState();
     if (nowBypassed != bypassed) { bypassed = nowBypassed; repaint(); }
@@ -161,7 +178,9 @@ void SlotComponent::resized()
     auto r = getLocalBounds().reduced (10, 0);
     auto header = r.removeFromTop (kHeaderHeight).withTrimmedTop (5).withTrimmedBottom (3);
     header.removeFromLeft (inspector ? 0 : 34);   // poignée + numéro de position
-    bypassButton.setBounds (header.removeFromRight (40));
+    const bool plateHeader = Faceplate::exists (shownType);
+    if (! plateHeader) { bypassButton.setBounds (header.removeFromRight (40)); header.removeFromRight (6); }
+    agcButton.setBounds (header.removeFromRight (inspector ? 92 : 60));
     header.removeFromRight (6);
     typeBox.setBounds (header);
 
