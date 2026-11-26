@@ -23,15 +23,16 @@ double splitResponseDb (double f, double f0, double q, double g)
 
 E9dsFaceplate::E9dsFaceplate (juce::AudioProcessorValueTreeState& a, int s)
     : apvts (a), slot (s),
-      knobs { PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()) },
+      knobs { PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()), PlateKnob (theme()) },
       modeSwitch (theme(), "SPLIT", "WIDE", false),
       listenSwitch (theme(), "OFF", "LISTEN", false),
       bypassSwitch (theme(), "ACTIVE", "BYPASS", true)
 {
-    const char* names[] = { "Threshold", "Frequency", "Width", "Range", "Release" };
-    for (int i = 0; i < 5; ++i)
+    const char* names[] = { "Threshold", "Frequency", "Width", "Range", "Release", "Lookahead" };
+    const int params[] = { E::threshold, E::frequency, E::width, E::range, E::release, E::lookahead };
+    for (int i = 0; i < 6; ++i)
     {
-        knobs[(std::size_t) i].bind (*apvts.getParameter (aura::params::generic (slot, i)));
+        knobs[(std::size_t) i].bind (*apvts.getParameter (aura::params::generic (slot, params[i])));
         knobs[(std::size_t) i].setName (names[i]);
         addAndMakeVisible (knobs[(std::size_t) i]);
     }
@@ -60,7 +61,7 @@ void E9dsFaceplate::resized()
     if (wide)
     {
         display = R (36.0f, 24.0f, 928.0f, 150.0f);
-        for (int i = 0; i < 5; ++i) knobs[(std::size_t) i].setBounds (R (36.0f + (float) i * 146.0f, 184.0f, 146.0f, 172.0f).toNearestInt());
+        for (int i = 0; i < 6; ++i) knobs[(std::size_t) i].setBounds (R (36.0f + (float) i * 122.0f, 184.0f, 122.0f, 172.0f).toNearestInt());
         modeSwitch.setBounds (R (790.0f, 190.0f, 174.0f, 52.0f).toNearestInt());
         listenSwitch.setBounds (R (790.0f, 252.0f, 174.0f, 52.0f).toNearestInt());
         bypassSwitch.setBounds (R (790.0f, 314.0f, 174.0f, 52.0f).toNearestInt());
@@ -71,6 +72,7 @@ void E9dsFaceplate::resized()
         for (int i = 0; i < 3; ++i) knobs[(std::size_t) i].setBounds (R (6.0f + (float) i * 78.0f, 70.0f, 76.0f, 84.0f).toNearestInt());
         knobs[3].setBounds (R (6.0f, 156.0f, 76.0f, 84.0f).toNearestInt());
         knobs[4].setBounds (R (84.0f, 156.0f, 76.0f, 84.0f).toNearestInt());
+        knobs[5].setBounds ({});   // compacte (historique) : sans Lookahead
         modeSwitch.setBounds (R (164.0f, 158.0f, 70.0f, 30.0f).toNearestInt());
         listenSwitch.setBounds (R (164.0f, 192.0f, 70.0f, 30.0f).toNearestInt());
         bypassSwitch.setBounds (R (164.0f, 226.0f, 70.0f, 30.0f).toNearestInt());

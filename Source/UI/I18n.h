@@ -22,7 +22,7 @@ enum class Key : int
     emptySlot, chooseModule, addModule, removeModule, bypassModule, enableModule, selectModule, dragToReorder,
     sidechain, latency, chain, inspector,
     helpSettings, helpInfo, helpLufs, helpBypassTile, helpRemoveTile, helpEmptyTile,
-    modNone, modEq, modComp, modDuck, modClip, modLimit, modDelay, modVerb, modW9b, modL9a, modE9ds,
+    modNone, modEq, modComp, modDuck, modClip, modLimit, modDelay, modVerb, modW9b, modL9a, modE9ds, modV9c3, modV9p2,
     count
 };
 
@@ -67,6 +67,8 @@ inline constexpr std::array<std::array<const char*, (std::size_t) Lang::count>, 
     /* modW9b       */ { "Compresseur FET (esprit CL1B), Auto Focus", "FET compressor (CL1B style), Auto Focus" },
     /* modL9a       */ { "Nivelleur opto (esprit LA-2A)", "Optical leveler (LA-2A style)" },
     /* modE9ds      */ { "De-esser : ma\xc3\xaetrise la sibilance sans zozotement", "De-esser: tames sibilance without lisping" },
+    /* modV9c3      */ { "Compresseur VCA quadruple : douceur et caract\xc3\xa8re, Auto Focus", "Quad-VCA compressor: smooth, characterful, Auto Focus" },
+    /* modV9p2      */ { "Pr\xc3\xa9ampli double canal : transfo en entr\xc3\xa9e, gain par crans", "Dual-channel preamp: input transformer, stepped gain" },
 }};
 
 inline Lang& current() noexcept { static Lang l = Lang::fr; return l; }
@@ -89,6 +91,8 @@ inline Key descriptionKey (aura::ModuleType t) noexcept
         case aura::ModuleType::w9b:   return Key::modW9b;
         case aura::ModuleType::l9a:   return Key::modL9a;
         case aura::ModuleType::e9ds:  return Key::modE9ds;
+        case aura::ModuleType::v9c3:  return Key::modV9c3;
+        case aura::ModuleType::v9p2:  return Key::modV9p2;
         case aura::ModuleType::none:  break;
     }
     return Key::modNone;

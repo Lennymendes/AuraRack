@@ -1,15 +1,15 @@
 # AuraRack 0.3 — NextDSP · rack multi-effets DXD (VST3 / AU)
 
-Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **10 modules** DSP natifs,
+Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **12 modules** DSP natifs,
 traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marque **NextDSP**, suite **AuraSuite**
 (Aura, AuraEngine, AuraDrum, AuraPitch, AuraRack).
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**) en plus des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
+**État** : Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**, **V9C3**, **V9P2**) en plus des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
 **AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, zone haute « module actif » + bande de chaîne
 de 10 tuiles, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
-**Auto Focus**) et **L9A** (LA-2A) ; **E9DS** (de-esser) complète la liste.
+**Auto Focus**) et **L9A** (LA-2A) ; **E9DS** (de-esser, avec Lookahead), **V9C3** (compresseur VCA à Auto Focus) et **V9P2** (préampli double canal) complètent la liste. Voir aussi `AuraRack-Checklist-DAW.md` (séance de validation en DAW).
 
 ## Compiler
 
@@ -31,17 +31,17 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 |---|---|
 | `Source/DSP/AuraDspCore.h` | SVF TPT, lisseurs, rampes, ligne de retard (Lagrange 3e ordre, reset O(1)), sur-échantillonneur polyphase, minimum glissant |
 | `Source/DSP/AuraModuleDSP.h` | Classe de base `AuraModuleDSP`, description des paramètres (`ParamSpec`, `ModuleInfo`), bus de clé |
-| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS` |
+| `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS`, `AuraV9C3`, `AuraV9P2` |
 | `Source/DSP/LoudnessMeter.h` | Mesure de sonie BS.1770-4 / EBU R128 (momentané, court terme, intégré, LRA, crête), sans JUCE, sans allocation |
 | `Source/DSP/ModuleRegistry.h` | Métadonnées par type, fabrique |
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
 | `Source/Parameters.*` | Disposition APVTS (154 paramètres), textes qui suivent le module du slot |
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
-| `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate` |
+| `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate`, `VertigoFaceplate` (V9C3 + V9P2) |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (167 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (248 vérifications) |
 | `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (25 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (27 vérifications) |
 
 ## Architecture audio
 
@@ -94,7 +94,7 @@ Input Gain, Output Gain, Master Mix (Dry aligné sur la latence totale du rack),
 *Bus Sidechain* (bus auxiliaire VST3 / AU, mono ou stéréo) ou *Entrée du rack*. Indicateurs affichés par l'éditeur :
 crêtes d'entrée / sortie, réduction de gain par slot, latence active, présence du Sidechain, fréquence, charge CPU.
 
-## Les 10 modules
+## Les 12 modules
 
 | Module | Algorithme | Paramètres |
 |---|---|---|
@@ -107,7 +107,9 @@ crêtes d'entrée / sortie, réduction de gain par slot, latence active, présen
 | **AuraVerb** | Plate de Dattorro (JAES 1997) mise à l'échelle de fs et de Size ; lectures du réservoir fractionnaires (Size continu) ; allpass modulés ; Decay = vrai RT60 (gain par segment 10^(−3·durée/RT60)) ; Damping en Hz. | Pre-Delay, Size, Decay, Damping, Width, Low Cut |
 | **W9BMK1** | Compresseur de caractère « CL 1B » avec façade dédiée et **Auto Focus** : voir la section suivante. | Input, Threshold, Ratio, Attack, Release, Output, Auto Focus, Focus |
 | **L9A** | Amplificateur de nivellement opto (esprit LA-2A) avec façade dédiée : voir la section « L9A ». | Peak Reduction, Gain, Mode, Meter |
-| **E9DS** | De-esser à bande sibilante dynamique avec façade dédiée : voir la section « E9DS ». | Threshold, Frequency, Width, Range, Release, Mode, Listen |
+| **E9DS** | De-esser à bande sibilante dynamique avec façade dédiée : voir la section « E9DS ». | Threshold, Frequency, Width, Range, Release, Mode, Listen, Lookahead |
+| **V9C3** | Compresseur VCA quadruple (esprit Vertigo VSC-3) à Auto Focus : voir la section « V9C3 ». | Threshold (dBu), Ratio, Attack, Release, Make-Up, SC HPF, Detect, Mode, Auto Focus, Focus |
+| **V9P2** | Préampli double canal (esprit Vertigo VSP-2) : voir la section « V9P2 ». | Gain, Fine, HPF, Pad, Phase, Input, 48V, Link, R Offset |
 
 Delay et Verb sortent 100 % wet ; leur Mix de slot passe à 30 % quand on les choisit.
 
@@ -231,8 +233,18 @@ en stéréo) → enveloppe crête (attaque 0,1 ms, relâchement 4 ms) → courbe
 - **Range** : réduction maximale (0–18 dB), jamais dépassée (saturation douce) : pas de trou dans le signal.
 - Constantes en secondes, calcul en double, latence 0 : même réponse à 44,1 et 384 kHz. Mix et Bypass : ceux du slot.
 - Façade (`E9dsFaceplate`) : affichage de la **réponse vivante** de la cloche dynamique (ce que le module fait réellement au
-  spectre) avec courbe fantôme à pleine réduction, barre de niveau de la bande face au seuil, valeur de GR ; 5 potards, MODE,
+  spectre) avec courbe fantôme à pleine réduction, barre de niveau de la bande face au seuil, valeur de GR ; 6 potards (dont Lookahead), MODE,
   LISTEN, ACTIVE / BYPASS (un contrôle = un paramètre, vérifié par le test UI).
+
+**Lookahead** (Off · 0,5 · 1 · 2 ms). Le détecteur voit le signal **non retardé** pendant que l'audio (et la bande) sont lus
+`délai` échantillons en arrière : la réduction est installée quand le « s » ou le « t » arrive. La latence est annoncée à
+l'hôte (`getLatencySamples`, **48 éch. à 1 ms / 48 kHz, 384 à 384 kHz**) et le moteur la relit à chaque tranche : Dry / Mix du
+slot et latence totale suivent (compensation par le DAW). Changer de cran fait un fondu de 1,5 ms + 1,5 ms (sans clic).
+**Off = comportement précédent, bit-identique**. Sous le seuil, la sortie est l'entrée retardée **bit pour bit** (testé).
+Mesuré : un « t » de 4 ms à 6,5 kHz a une crête de sortie plus basse avec 2 ms d'anticipation ; réduction en régime établi
+identique à 48 et 384 kHz ; moteur : Mix 50 % + Lookahead = une impulsion unique d'amplitude exacte à la latence annoncée.
+La structure (paramètre choisi, latence, détecteur indépendant du trajet audio) est prête à être alignée sur le E9DS du lecteur
+AURA dès que sa description est fournie.
 
 **Avec W9BMK1 et L9A.** Ordre usuel sur une voix : `E9DS → L9A (nivellement) → W9BMK1 (couleur / contrôle)` — le de-esser
 d'abord, pour que le compresseur ne « pousse » pas les sibilantes ; ou `L9A → E9DS` si l'on veut dessiber le signal déjà
@@ -242,6 +254,53 @@ réordonnent par glisser-déposer sans coupure.
 Mesures (banc DSP) : réduction statique = théorie à 0,04 dB près (48 et 384 kHz) ; Range jamais dépassé (7,97 dB pour 8) ;
 44,1 vs 384 kHz : 0,002 dB d'écart ; sous le seuil : sortie bit-identique ; Split réduit 6,5 kHz de 7,6 dB et laisse 1 kHz à
 −0,04 dB ; attaque : 85 % de la réduction en 5 ms ; relâchement (60 ms) sous 10 % en 146 ms.
+
+## V9C3 : compresseur VCA (esprit Vertigo VSC-3)
+
+> Conception AuraRack inspirée du comportement publié de ce type d'appareil : **aucune revendication de fidélité au matériel**,
+> constantes calibrées par mesure. DSP : `Source/DSP/Modules/AuraV9C3.h`, `double`, latence 0, constantes en secondes
+> (même réponse de 44,1 à 384 kHz). Étalonnage : **0 dBu = −18 dBFS** (+18 dBu = 0 dBFS, EBU R68) ; Threshold −22 … +23 dBu.
+
+| Contrôle | Réglage |
+|---|---|
+| Mode | **Stereo** (une clé liée, un gain pour L et R : image intacte) · **Mono** (clé sommée) · **Dual** (deux détecteurs indépendants) · **M/S** (compression du Mid et du Side par leur propre clé) |
+| Detect | **Peak** (attaque 20 µs, relâchement 8 ms) ou **RMS** (fenêtre 10 ms, référencée crête) |
+| Ratio | **Soft** (« TipToe » : ≈ 1:1 au seuil, tendant vers 8:1 en profondeur), 2:1, 4:1, 8:1, 10:1, **Limit** 40:1 ; genou 4 dB |
+| Attack | 10 crans : 0,1 · 0,2 · 0,4 · 0,7 · 1,5 · 3 · 6 · 12 · 25 · 40 ms |
+| Release | 10 crans : 50 … 1200 ms, + **Auto Fast** (0,04 / 0,5 s) et **Auto Slow** (0,15 / 2,5 s), dépendants du programme |
+| SC HPF | Off · 70 Hz · 140 Hz sur la clé (un grave fort ne fait plus pomper) |
+| Make-Up | 0 … 24 dB |
+| Auto Focus / Focus | seuil piloté par le `FocusTracker` (celui du W9BMK1) vers **1 … 12 dB de réduction moyenne**, sans pompage ; le potard Threshold affiche le seuil effectif (dBu) |
+
+**Couleur.** Entrée « transformateur » (saturation douce des graves, < 120 Hz) puis étage de sortie symétrique à saturation
+progressive : le taux de distorsion croît avec la réduction de gain **et** le Make-Up. Au repos (pas de réduction, Make-Up 0)
+le module est quasi transparent (mesuré : gain ±0,05 dB, H2 < −55 dB, H3 < −65 dB).
+
+**Affichage** (`VertigoFaceplate`) : bargraphe de réduction à zone fine (0–6 dB sur la moitié gauche) puis jusqu'à 24 dB,
+seuil effectif en dBu, repère de cible en Auto Focus.
+
+Mesures (banc DSP) : courbes statiques = théorie à ±0,3 dB (Peak et RMS, 2/4/8/10/40:1 et Soft) ; Stereo : un seul gain ;
+Dual : le canal faible reste intact ; M/S : Mid −4 dB et plus, Side ±0,3 dB ; Release 120 / 380 / 1000 ms à ±20 % ; Auto Fast
+> 3× plus long après un passage soutenu qu'après un bref ; SC HPF 140 Hz : un 40 Hz à −6 dBFS ne comprime plus ; Auto Focus
+3 / 6 dB à ±1 dB (parole synthétique, deux niveaux), Soft / RMS / M-S à ±1,5 dB, seuil quasi immobile ; 44,1 vs 384 kHz : < 0,1 dB.
+
+## V9P2 : préampli micro double canal (esprit Vertigo VSP-2)
+
+> Conception AuraRack, sans revendication de fidélité au matériel. DSP : `Source/DSP/Modules/AuraV9P2.h`, `double`, latence 0.
+> Étalonnage identique (0 dBu = −18 dBFS) ; plafond +24 dBu (= +6 dBFS), voyant Clip rouge dès **+19 dBu**.
+
+- **Gain** 12 … 72 dB par pas de 6 dB + **Fine** 0 … +6 dB ; **le gain net est relatif à 36 dB (= unité)** : un rack n'a pas de
+  micro derrière, le module garde donc le niveau d'un signal de ligne au centre de la plage (Gain net = Gain + Fine − 36 − Pad).
+- **HPF** Off / 80 Hz / 120 Hz (12 dB/oct) ; **Pad** −20 dB ; **Phase Ø** Off / L / R / L+R ; **Input** Mic / **Inst-DI**
+  (contourne le « transformateur » d'entrée, fondu de 20 ms) ; **Link** Dual (deux canaux, **R Offset** ±6 dB) ou Linked.
+- **48V** : **indicateur d'état seulement, sans effet audio** (aucune alimentation fantôme dans un plugin).
+- Chaîne : gains lissés (20 ms) → saturation « transformateur » des graves (< 60 Hz) → HPF (fondu 10 ms) → polarité (rampe 5 ms) →
+  étage à plafond +24 dBu (biais léger : H2 puis H3 croissants avec le niveau).
+- Mesures : gains par cran, Fine et Pad exacts à 0,05 dB ; HPF −12 dB une octave sous la coupure à 44,1 et 384 kHz ; polarité ;
+  Dual / Linked ; **aucun clic** (cran de gain, polarité, Mic → DI, HPF, Pad : pente ≤ 1,6× celle du sinus) ; H3 < −65 dB à 0 dBu,
+  distorsion croissante en surcharge, plafond ≈ +6 dBFS, voyant vert / rouge ; gain identique à 44,1 et 384 kHz.
+- Façade : barre de niveau d'entrée en dBu (le module publie la crête **avant** l'étage de saturation), voyants Signal (vert) / Clip
+  (rouge), gain net affiché ; R Offset estompé en mode Linked.
 
 ## Ajouter un module au rack
 
@@ -293,7 +352,7 @@ Mesures (banc DSP) : réduction statique = théorie à 0,04 dB près (48 et 384 
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 167 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 25) : tout passe
+`aurarack_dsp_test` (sans JUCE, 248 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 27) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -343,7 +402,10 @@ dans l'état (`order="0,1,…"`).
 - **Aura-Tube / L-Comp** : l'ADAA (sous 176,4 kHz seulement ; évaluation directe en DXD) ajoute un demi-échantillon de retard sur ces deux chemins.
   Changer d'algorithme remet à zéro l'enveloppe (léger saut de gain).
 - **W9BMK1 / L9A** : constantes calibrées par mesure, non comparées au matériel (aucune revendication de « dépasser l'original ») ; la police du logo dépend de l'OS ; façades non vues dans un vrai DAW.
-- **E9DS** : conception propre à AuraRack (la spécification du E9DS du lecteur AURA n'est pas disponible) ; détection sur la bande seule (pas de détection relative au niveau large-bande), pas d'anticipation (latence 0, attaque 0,25 ms) : un « t » ou « ch » très bref peut passer avant la réduction. Constantes validées par mesure sur signaux synthétiques, **pas à l'écoute sur de vraies voix** : à valider.
+- **E9DS** : conception propre à AuraRack (la spécification du E9DS du lecteur AURA n'est pas disponible) ; détection sur la bande seule (pas de détection relative au niveau large-bande), anticipation optionnelle (Lookahead, jusqu'à 2 ms, qui ajoute sa latence) ; avec Lookahead Off (latence 0, attaque 0,25 ms) un « t » ou « ch » très bref peut passer avant la réduction. Constantes validées par mesure sur signaux synthétiques, **pas à l'écoute sur de vraies voix** : à valider.
+- **V9C3** : **Threshold, Ratio, Attack, Release, Make-Up et Focus sont communs aux deux voies** en Dual et M/S (pas de réglages séparés par voie) ; **pas de compensation d'égale sonie** au changement de Ratio ; les modèles « transformateur » et « étage symétrique » sont des approximations calibrées par mesure, pas une comparaison avec le matériel ; Soft utilise une approximation (ratio 4, sans genou) dans l'Auto Focus (validé à ±1,5 dB).
+- **V9P2** : le Gain est **relatif à 36 dB** (pas de gain micro réel) ; **48V = indicateur seulement** ; pas d'impédance d'entrée ni de modèle de micro ; transformateur et étage en saturation douce, **non comparés au matériel**.
+- **Validation DAW** : V9C3, V9P2, le Lookahead E9DS et les façades n'ont **pas** été essayés dans un vrai DAW : suivre `AuraRack-Checklist-DAW.md`.
 - **LUFS** : crête échantillon seulement (pas de true-peak) ; l'intégrée est lue par histogramme à pas de 0,1 LU (écart ≤ 0,03 LU mesuré) ; la mesure suit la sortie du rack, avant le traitement de l'hôte.
 - **Interface T-RackS** : vérifiée par rendu PNG et événements souris simulés ; les menus contextuels (ajout / retrait) et la bulle ⚙️ s'ouvrent via JUCE et n'ont pas été exercés dans un vrai DAW ; les cartes génériques (AuraEQ…) sont lisibles mais sans courbes.
 - **Auto Focus** : lent par construction (≈ 10 s pour se caler après un changement de programme) ; le Threshold manuel est ignoré pendant l'Auto ; testé sur une parole synthétique et un sinus, pas sur du matériel musical varié : à valider à l'écoute (percussions, mix complet).

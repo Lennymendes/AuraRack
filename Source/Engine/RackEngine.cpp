@@ -437,6 +437,19 @@ void RackEngine::processSlot (Slot& s, int slotIndex, double* L, double* R, int 
     s.outTrim.setTarget (gainFromDb (readOr (s.sources.outTrim, 0.0f)));
     applyModuleParameters (s);
 
+    // Latence réglable (E9DS Lookahead) : relue à chaque tranche ; le Dry du slot suit (fondu de 5 ms) et l'hôte est prévenu
+    // par le message thread (getRequestedLatency).
+    if (s.current->module != nullptr)
+    {
+        const int lat = s.current->module->getLatencySamples();
+        if (lat != s.current->latency)
+        {
+            s.current->latency = lat;
+            slotsMeta[(std::size_t) slotIndex].latency.store (lat);
+            s.dry.setLatency (lat);
+        }
+    }
+
     // Entrée brute retardée de la latence du module : chemin Dry du Mix et chemin Bypass, toujours alignés.
     double* rl = rawL.data();
     double* rr = rawR.data();

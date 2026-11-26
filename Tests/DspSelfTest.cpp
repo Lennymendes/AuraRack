@@ -1149,7 +1149,7 @@ struct SpeechSource
 struct FocusRun { std::vector<double> time, threshold, reduction, active; };   // active = 1 pendant une syllabe
 
 /** Fait tourner le W9BMK1 sur la parole. `levelDb(t)` : niveau (dBFS) de la parole ; `extraDb(t)` : gain supplémentaire par échantillon. */
-static FocusRun runFocus (AuraW9B& c, double fs, double seconds, const std::function<double (double)>& levelDb,
+static FocusRun runFocus (AuraModuleDSP& c, double fs, double seconds, const std::function<double (double)>& levelDb,
                           const std::function<double (double)>& extraDb = {}, double blockSeconds = 0.002)
 {
     static const SpeechSource speech;
@@ -1529,8 +1529,8 @@ static void testL9a()
 static void testRackModules()
 {
     std::puts ("\n== 15. W9BMK1 et L9A dans le rack (types persistés, indicateurs publiés par le moteur)");
-    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && (int) ModuleType::e9ds == 10 && kNumModuleTypes == 11,
-           "Identifiants de type figés (w9b = 8, l9a = 9, e9ds = 10) : les sessions existantes restent valables");
+    check ((int) ModuleType::w9b == 8 && (int) ModuleType::l9a == 9 && (int) ModuleType::e9ds == 10 && (int) ModuleType::v9c3 == 11 && (int) ModuleType::v9p2 == 12 && kNumModuleTypes == 13,
+           "Identifiants de type figés (w9b = 8, l9a = 9, e9ds = 10, v9c3 = 11, v9p2 = 12) : les sessions existantes restent valables");
 
     const double fs = 96000.0;
     RackEngine e;
@@ -1586,7 +1586,7 @@ static void testE9ds()
 {
     std::puts ("\n== 16. E9DS (de-esser DXD)");
     using E = AuraE9DS;
-    check (E::info().params.size() == 7 && E::info().visibleMask (0) == 0x7Fu, "7 paramètres, tous visibles (aucun bouton mort)");
+    check (E::info().params.size() == 8 && E::info().visibleMask (0) == 0xFFu, "8 paramètres, tous visibles (aucun bouton mort)");
 
     auto settled = [] (double fs, double f, double amp, int modeParam, double* gr)
     {
@@ -1785,13 +1785,501 @@ static void testLoudness()
     }
 }
 
+
+//==============================================================================
+static double dbOf (double a) { return 20.0 * std::log10 (std::max (a, 1.0e-12)); }
+
+/** Niveau (dB) de la composante f d'un tampon, sur les 1/2 dernières secondes. */
+static double toneDb (const Buf& x, double f, double fs) { return dbOf (amplitudeAt (x, x.size() / 2, x.size() / 2, f, fs)); }
+
+static void testV9c3()
+{
+    std::puts ("\n== 18. V9C3 (compresseur VCA, Auto Focus)");
+    using C = AuraV9C3;
+    check (C::info().params.size() == 10 && C::info().visibleMask (0) == 0x3FFu, "10 paramètres, tous visibles (aucun bouton mort)");
+
+    auto prep = [] (C& c, double fs, double thrDbu, int ratio, int release = 3, int attack = 4)
+    {
+        c.prepare (fs, 256);
+        setParam (c, C::threshold, thrDbu);
+        setParam (c, C::ratio, ratio);
+        setParam (c, C::attack, attack);
+        setParam (c, C::release, release);
+        c.reset();
+    };
+    auto settledGr = [&] (C& c, double fs, double f, double ampDb, double seconds = 1.5)
+    {
+        Buf x = sine ((std::size_t) (fs * seconds), f, fs, std::pow (10.0, ampDb / 20.0)), r = x;
+        double m = 0.0; int cnt = 0;
+        const std::size_t half = x.size() / 2;
+        for (std::size_t off = 0; off < x.size(); off += 256)
+        {
+            const int n = (int) std::min<std::size_t> (256, x.size() - off);
+            c.process (x.data() + off, r.data() + off, n, {});
+            if (off >= half) { m += c.getGainReductionDb(); ++cnt; }
+        }
+        return m / cnt;
+    };
+
+    // --- Courbes statiques : théorie à ±0,3 dB (Peak et RMS), tous les ratios, étalonnage dBu.
+    {
+        const struct { int idx; const char* name; } ratios[] = { { C::r2, "2:1" }, { C::r4, "4:1" }, { C::r8, "8:1" }, { C::r10, "10:1" }, { C::limit, "Limit 40:1" }, { C::soft, "Soft" } };
+        for (int det = 0; det < 2; ++det)
+            for (auto& r : ratios)
+            {
+                C c; prep (c, 48000.0, 0.0, r.idx);   // seuil 0 dBu = -18 dBFS
+                setParam (c, C::detect, det);
+                const double gr = settledGr (c, 48000.0, 1000.0, -8.0);   // 10 dB au-dessus du seuil
+                const double theory = C::staticReduction (-8.0, -18.0, r.idx);
+                char what[128];
+                std::snprintf (what, sizeof what, "Réduction statique %s (%s) : théorie à ±0,3 dB (seuil 0 dBu, +10 dB)", r.name, det ? "RMS" : "Peak");
+                check (std::abs (gr - theory) < 0.3, what, gr - theory, "dB");
+            }
+        const double slope0 = (C::staticReduction (-17.0, -18.0, C::soft) - C::staticReduction (-18.0, -18.0, C::soft)) / 1.0;
+        const double slope60 = (C::staticReduction (-18.0 + 61.0, -18.0, C::soft) - C::staticReduction (-18.0 + 59.0, -18.0, C::soft)) / 2.0;
+        check (slope0 < 0.1 && 1.0 / (1.0 - slope60) > 5.0, "Soft : pente quasi nulle au seuil (~1:1), ratio local > 5:1 à +60 dB (→ 8:1)", 1.0 / (1.0 - slope60), ":1 local à +60 dB");
+        double a = 0.0, b = 0.0;
+        { C c; prep (c, 44100.0, 0.0, C::r4); a = settledGr (c, 44100.0, 1000.0, -8.0); }
+        { C c; prep (c, 384000.0, 0.0, C::r4); b = settledGr (c, 384000.0, 1000.0, -8.0); }
+        check (std::abs (a - b) < 0.1, "44,1 vs 384 kHz : même réduction", std::abs (a - b), "dB");
+    }
+
+    // --- Modes de détection.
+    {
+        const double fs = 48000.0;
+        auto run = [&] (int mode, double lAmpDb, double rAmpDb, double rPhase = 0.0)
+        {
+            C c; prep (c, fs, 0.0, C::r8);
+            setParam (c, C::mode, mode);
+            Buf L = sine ((std::size_t) (fs * 1.5), 1000.0, fs, std::pow (10.0, lAmpDb / 20.0));
+            Buf R = sine ((std::size_t) (fs * 1.5), 1000.0, fs, std::pow (10.0, rAmpDb / 20.0), rPhase);
+            const Buf inL = L, inR = R;
+            runModule (c, L, R);
+            struct Out { double dl, dr; Buf L, R, inL, inR; };
+            return Out { toneDb (L, 1000.0, fs) - toneDb (inL, 1000.0, fs), toneDb (R, 1000.0, fs) - toneDb (inR, 1000.0, fs), L, R, inL, inR };
+        };
+        const auto st = run (C::stereo, -8.0, -28.0);
+        check (std::abs (st.dl - st.dr) < 0.05 && st.dl < -5.0, "Stereo : un seul gain pour L et R (le canal faible suit le fort, image intacte)", st.dl - st.dr, "dB");
+        const auto du = run (C::dual, -8.0, -28.0);
+        check (du.dl < -5.0 && std::abs (du.dr) < 0.3, "Dual : le canal fort est comprimé, le faible reste intact", du.dr, "dB");
+        const auto mo = run (C::mono, -8.0, -8.0, 3.14159265358979);   // L = -R : somme nulle
+        const auto s2 = run (C::stereo, -8.0, -8.0, 3.14159265358979);
+        check (std::abs (mo.dl) < 0.3 && s2.dl < -5.0, "Mono SC : une clé sommée ne voit pas un signal en opposition de phase (Stereo, si)", mo.dl);
+        // M/S : Mid fort (L = R), Side faible : le Mid est comprimé, le Side ne bouge pas.
+        {
+            C c; prep (c, fs, 0.0, C::r8);
+            setParam (c, C::mode, C::midSide);
+            Buf L (96000), R (96000), inS (96000);
+            for (std::size_t i = 0; i < L.size(); ++i)
+            {
+                const double t = (double) i / fs, mid = 0.4 * std::sin (dsp::kTwoPi * 1000.0 * t), side = 0.01 * std::sin (dsp::kTwoPi * 3000.0 * t);
+                L[i] = mid + side; R[i] = mid - side; inS[i] = side;
+            }
+            const Buf inL = L;
+            runModule (c, L, R);
+            Buf sOut (L.size());
+            for (std::size_t i = 0; i < L.size(); ++i) sOut[i] = 0.5 * (L[i] - R[i]);
+            const double midRed = toneDb (L, 1000.0, fs) - toneDb (inL, 1000.0, fs), sideDelta = toneDb (sOut, 3000.0, fs) - toneDb (inS, 3000.0, fs);
+            check (midRed < -4.0 && std::abs (sideDelta) < 0.3, "M/S : le Mid est comprimé, le Side reste intact", sideDelta, "dB");
+        }
+    }
+
+    // --- Attack / Release : crans exacts, Auto dépendant du programme, indépendance de fs.
+    {
+        auto releaseTime = [] (double fs, int releaseIdx)
+        {
+            C c; c.prepare (fs, 256);
+            setParam (c, C::threshold, -10.0); setParam (c, C::ratio, C::limit); setParam (c, C::release, releaseIdx); setParam (c, C::attack, 0);
+            c.reset();
+            const std::size_t nBurst = (std::size_t) (0.5 * fs), nTail = (std::size_t) (3.0 * fs);
+            double peak = 0.0, t37 = -1.0;
+            for (std::size_t i = 0; i < nBurst + nTail; ++i)
+            {
+                double l = (i < nBurst ? 0.5 : 0.0001) * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs), r = l;
+                c.process (&l, &r, 1, {});
+                const double gr = c.getGainReductionDb();
+                if (i < nBurst) peak = gr;
+                else if (t37 < 0.0 && gr < peak * 0.368) t37 = (double) (i - nBurst) / fs;
+            }
+            return t37;
+        };
+        for (auto [idx, ms] : { std::pair { 2, 120.0 }, std::pair { 5, 380.0 }, std::pair { 8, 1000.0 } })
+        {
+            const double t = releaseTime (96000.0, idx) * 1000.0;
+            char what[96];
+            std::snprintf (what, sizeof what, "Release %.0f ms : constante de temps (37 %%) à ±20 %%", ms);
+            check (std::abs (t - ms) < 0.2 * ms, what, t, "ms");
+        }
+        check (std::abs (releaseTime (44100.0, 5) - releaseTime (384000.0, 5)) < 0.01, "Release identique à 44,1 et 384 kHz", releaseTime (44100.0, 5) - releaseTime (384000.0, 5), "s");
+
+        auto attackTime = [] (double fs, int attackIdx)
+        {
+            C c; c.prepare (fs, 256);
+            setParam (c, C::threshold, -10.0); setParam (c, C::ratio, C::limit); setParam (c, C::attack, attackIdx); setParam (c, C::release, 9);
+            c.reset();
+            const auto n = (std::size_t) (0.5 * fs);
+            double final = 0.0, t63 = -1.0;
+            Buf x (n);
+            for (std::size_t i = 0; i < n; ++i) x[i] = 0.5 * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs);
+            std::vector<double> gr (n);
+            for (std::size_t i = 0; i < n; ++i) { double l = x[i], r = l; c.process (&l, &r, 1, {}); gr[i] = c.getGainReductionDb(); }
+            final = gr.back();
+            for (std::size_t i = 0; i < n; ++i) if (gr[i] >= 0.632 * final) { t63 = (double) i / fs; break; }
+            return t63;
+        };
+        const double a6 = attackTime (96000.0, 6) * 1000.0, a40 = attackTime (96000.0, 9) * 1000.0;
+        check (a6 > 3.0 && a6 < 12.0 && a40 > 24.0 && a40 < 64.0, "Attack 6 ms et 40 ms : temps de montée à 63 % cohérents", a6, "ms (40 ms : mesuré ci-dessous)");
+        check (std::abs (attackTime (44100.0, 6) - attackTime (384000.0, 6)) < 0.002, "Attack identique à 44,1 et 384 kHz", attackTime (44100.0, 6) - attackTime (384000.0, 6), "s");
+
+        // Auto Fast / Auto Slow : relâchement plus court après un passage bref qu'après une compression soutenue.
+        auto autoRelease = [] (int idx, double burstS)
+        {
+            const double fs = 48000.0;
+            C c; c.prepare (fs, 256);
+            setParam (c, C::threshold, -10.0); setParam (c, C::ratio, C::r8); setParam (c, C::release, idx);
+            c.reset();
+            const std::size_t nBurst = (std::size_t) (burstS * fs), nTail = (std::size_t) (10.0 * fs);
+            double peak = 0.0, t = -1.0;
+            for (std::size_t i = 0; i < nBurst + nTail; ++i)
+            {
+                double l = (i < nBurst ? 0.5 : 0.0001) * std::sin (dsp::kTwoPi * 1000.0 * (double) i / fs), r = l;
+                c.process (&l, &r, 1, {});
+                const double gr = c.getGainReductionDb();
+                if (i < nBurst) peak = gr; else if (t < 0.0 && gr < 0.5 * peak) t = (double) (i - nBurst) / fs;
+            }
+            return t;
+        };
+        const double fastShort = autoRelease (10, 0.15), fastLong = autoRelease (10, 8.0), slowShort = autoRelease (11, 0.15);
+        check (fastLong > 3.0 * fastShort, "Auto Fast : relâchement dépendant du programme (bref vs soutenu)", fastLong / fastShort, "× plus long");
+        check (slowShort > fastShort, "Auto Slow plus lent qu'Auto Fast", slowShort / fastShort, "×");
+    }
+
+    // --- Filtre HP de clé : un 40 Hz fort ne déclenche pas la compression avec 140 Hz.
+    {
+        const double fs = 48000.0;
+        C off; prep (off, fs, 0.0, C::r8);
+        C hp; prep (hp, fs, 0.0, C::r8); setParam (hp, C::scHpf, 2);
+        const double a = settledGr (off, fs, 40.0, -6.0), b = settledGr (hp, fs, 40.0, -6.0);
+        check (a > 3.0 && b < 0.5, "SC HPF 140 Hz : un 40 Hz à -6 dBFS ne pompe plus (GR Off, HPF)", b, "dB (Off : > 3 dB)");
+    }
+
+    // --- Coloration progressive, transparence au repos.
+    {
+        const double fs = 96000.0;
+        auto hd3 = [&] (double thrDbu, double makeUp, double inDb)
+        {
+            C c; prep (c, fs, thrDbu, C::r4);
+            setParam (c, C::makeUp, makeUp);
+            c.reset();
+            Buf x = sine ((std::size_t) (fs * 1.0), 1000.0, fs, std::pow (10.0, inDb / 20.0)), r = x;
+            runModule (c, x, r);
+            return toneDb (x, 3000.0, fs) - toneDb (x, 1000.0, fs);
+        };
+        // Même niveau de sortie (0 dBFS), raideur différente : seule la coloration change.
+        const double rest = hd3 (23.0, 0.0, 0.0), withMakeUp = hd3 (23.0, 24.0, -24.0), withGr = hd3 (-22.0, 24.0, -12.0);
+        check (rest < -50.0, "Au repos (pas de réduction, Make-Up 0, 0 dBFS) : harmonique 3 < -50 dB", rest, "dB");
+        check (withMakeUp > rest + 8.0, "La coloration croît avec le Make-Up (même niveau de sortie)", withMakeUp - rest, "dB de plus");
+        check (withGr > rest + 8.0, "La coloration croît avec la réduction de gain + Make-Up", withGr - rest, "dB de plus");
+        C c; prep (c, 48000.0, 23.0, C::r4);
+        Buf x = sine (48000, 1000.0, 48000.0, 0.5), r = x; const Buf in = x;
+        runModule (c, x, r);
+        const double dAmp = toneDb (x, 1000.0, 48000.0) - toneDb (in, 1000.0, 48000.0);
+        const double h2 = toneDb (x, 2000.0, 48000.0) - toneDb (x, 1000.0, 48000.0), h3 = toneDb (x, 3000.0, 48000.0) - toneDb (x, 1000.0, 48000.0);
+        check (std::abs (dAmp) < 0.05 && h2 < -55.0 && h3 < -65.0, "Sous le seuil, Make-Up 0 (-6 dBFS) : gain à ±0,05 dB, H2 < -55 dB, H3 < -65 dB", dAmp, "dB");
+    }
+
+    // --- Auto Focus : réduction moyenne = cible, indépendante du niveau, et aussi en Soft / RMS / M-S.
+    {
+        const double fs = 48000.0;
+        auto prepAuto = [&] (C& c, double target, int ratio, int detect = 0, int mode = 0)
+        {
+            c.prepare (fs, 256);
+            setParam (c, C::ratio, ratio); setParam (c, C::attack, 5); setParam (c, C::release, 5);
+            setParam (c, C::detect, detect); setParam (c, C::mode, mode);
+            setParam (c, C::focus, target); setParam (c, C::autoFocus, 1.0);
+            c.reset();
+        };
+        for (double target : { 3.0, 6.0 })
+            for (double level : { -24.0, -12.0 })
+            {
+                C c; prepAuto (c, target, C::r4);
+                auto r = runFocus (c, fs, 45.0, [level] (double) { return level; });
+                const double m = meanActive (r, 35.0, 45.0);
+                char what[128];
+                std::snprintf (what, sizeof what, "Auto Focus V9C3 : cible %.0f dB, parole à %.0f dBFS", target, level);
+                check (std::abs (m - target) < 1.0, what, m, "dB");
+            }
+        for (auto [ratio, det, mode, name] : { std::tuple { (int) C::soft, 0, 0, "Soft" }, std::tuple { (int) C::r8, 1, 0, "RMS 8:1" }, std::tuple { (int) C::r4, 0, 3, "M/S" } })
+        {
+            C c; prepAuto (c, 6.0, ratio, det, mode);
+            auto r = runFocus (c, fs, 45.0, [] (double) { return -18.0; });
+            const double m = meanActive (r, 35.0, 45.0);
+            char what[128];
+            std::snprintf (what, sizeof what, "Auto Focus V9C3 (%s) : cible 6 dB à ±1,5 dB", name);
+            check (std::abs (m - 6.0) < 1.5, what, m, "dB");
+        }
+        C c; prepAuto (c, 6.0, C::r4);
+        auto r = runFocus (c, fs, 60.0, [] (double) { return -20.0; });
+        check (worstWindowSpan (r, 30.0, 60.0, 0.5) < 0.4 && maxSlew (r) <= 6.05, "Anti-pompage : seuil quasi immobile (0,5 s < 0,4 dB), vitesse ≤ 6 dB/s", worstWindowSpan (r, 30.0, 60.0, 0.5), "dB");
+        check (r.threshold.back() > -22.0 && r.threshold.back() < 23.0, "Seuil effectif publié en dBu, dans la plage", r.threshold.back(), "dBu");
+    }
+    {   // Robustesse : plein signal à 384 kHz, tous les modes, aucun NaN.
+        bool finite = true;
+        for (int mode = 0; mode < 4; ++mode)
+        {
+            C c; c.prepare (384000.0, 256); setParam (c, C::mode, mode); setParam (c, C::ratio, C::limit); setParam (c, C::makeUp, 24.0); c.reset();
+            Buf L (200000), R;
+            PortableGauss g (11 + (unsigned) mode, 0.5);
+            for (auto& v : L) v = g();
+            R = L;
+            runModule (c, L, R);
+            for (double v : L) finite = finite && std::isfinite (v);
+        }
+        check (finite, "Bruit fort, Limit 40:1, Make-Up 24 dB, 4 modes à 384 kHz : sortie finie");
+    }
+}
+
+static void testV9p2()
+{
+    std::puts ("\n== 19. V9P2 (préampli double canal)");
+    using P = AuraV9P2;
+    check (P::info().params.size() == 9 && P::info().visibleMask (0) == 0x1FFu, "9 paramètres, tous visibles (aucun bouton mort)");
+
+    const double fs = 96000.0;
+    auto make = [&] (double fs2 = 96000.0) { auto c = std::make_unique<P>(); c->prepare (fs2, 256); return c; };
+    auto run = [&] (P& c, double f, double ampDb, double fs2 = 96000.0, double seconds = 1.0)
+    {
+        Buf L = sine ((std::size_t) (fs2 * seconds), f, fs2, std::pow (10.0, ampDb / 20.0)), R = L; const Buf in = L;
+        runModule (c, L, R);
+        struct O { Buf L, R, in; } o { L, R, in };
+        return o;
+    };
+    auto gainDb = [&] (const auto& o, double f, double fs2 = 96000.0) { return toneDb (o.L, f, fs2) - toneDb (o.in, f, fs2); };
+
+    // --- Gain : 36 dB = unité ; cran de 6 dB ; Fine ; Pad.
+    for (auto [idx, fine, pad] : { std::tuple { 4, 0.0, 0 }, std::tuple { 6, 0.0, 0 }, std::tuple { 0, 0.0, 0 }, std::tuple { 4, 6.0, 0 }, std::tuple { 6, 0.0, 1 } })
+    {
+        auto c = make();
+        setParam (*c, P::gain, idx); setParam (*c, P::fine, fine); setParam (*c, P::pad, pad); c->reset();
+        const auto o = run (*c, 1000.0, -60.0);
+        const double expected = P::netGainDb (idx, fine, pad != 0);
+        char what[128];
+        std::snprintf (what, sizeof what, "Gain %d dB + Fine %.0f%s : %+.0f dB net (mesuré à -60 dBFS)", 12 + 6 * idx, fine, pad ? " + Pad" : "", expected);
+        check (std::abs (gainDb (o, 1000.0) - expected) < 0.05, what, gainDb (o, 1000.0) - expected, "dB d'écart");
+    }
+
+    // --- HPF 12 dB/oct, indépendant de fs.
+    for (double rate : { 44100.0, 384000.0 })
+        for (auto [idx, hz] : { std::pair { 1, 80.0 }, std::pair { 2, 120.0 } })
+        {
+            auto c = make (rate);
+            setParam (*c, P::hpf, idx); c->reset();
+            const auto a = run (*c, hz * 0.5, -50.0, rate, 1.5);
+            const auto b = run (*c, 2000.0, -50.0, rate, 1.0);
+            const double lowDb = gainDb (a, hz * 0.5, rate), highDb = gainDb (b, 2000.0, rate);
+            char what[128];
+            std::snprintf (what, sizeof what, "HPF %.0f Hz à %.1f kHz : -12 dB une octave sous la coupure, 0 dB à 2 kHz", hz, rate / 1000.0);
+            check (std::abs (lowDb + 12.3) < 0.6 && std::abs (highDb) < 0.1, what, lowDb, "dB");
+        }
+    {
+        auto c = make();
+        const auto o = run (*c, 40.0, -50.0, fs, 1.5);
+        check (std::abs (gainDb (o, 40.0)) < 0.1, "HPF Off : 40 Hz inchangé à 0,1 dB (blocage du continu à 5 Hz : -0,07 dB)", gainDb (o, 40.0), "dB");
+    }
+
+    // --- Polarité (Off / L / R / L+R) et Dual / Linked.
+    {
+        for (int ph = 0; ph < 4; ++ph)
+        {
+            auto c = make();
+            setParam (*c, P::phase, ph); c->reset();
+            const auto o = run (*c, 1000.0, -60.0, fs, 0.5);
+            // corrélation avec l'entrée : +1 normal, -1 inversé (après la rampe de 5 ms)
+            auto sign = [&] (const Buf& y) { double s = 0.0; for (std::size_t i = 24000; i < y.size(); ++i) s += y[i] * o.in[i]; return s >= 0.0 ? 1 : -1; };
+            const bool okL = sign (o.L) == ((ph == 1 || ph == 3) ? -1 : 1), okR = sign (o.R) == ((ph >= 2) ? -1 : 1);
+            char what[96];
+            std::snprintf (what, sizeof what, "Phase %s : polarité L et R conformes", std::array<const char*, 4> { "Off", "L", "R", "L+R" }[(std::size_t) ph]);
+            check (okL && okR, what);
+        }
+        for (int linked = 0; linked < 2; ++linked)
+        {
+            auto c = make();
+            setParam (*c, P::link, linked); setParam (*c, P::rOffset, 6.0); c->reset();
+            const auto o = run (*c, 1000.0, -60.0, fs, 0.5);
+            const double d = toneDb (o.R, 1000.0, fs) - toneDb (o.L, 1000.0, fs);
+            check (linked ? std::abs (d) < 0.05 : std::abs (d - 6.0) < 0.05, linked ? "Linked : R Offset ignoré (L = R)" : "Dual : R Offset +6 dB appliqué au canal R", d, "dB");
+        }
+    }
+
+    // --- Pas de clic : changement de cran de gain, de polarité, d'entrée Inst/DI, de HPF pendant un sinus.
+    {
+        const double rate = 48000.0;
+        auto clickRatio = [&] (int param, double from, double to)
+        {
+            auto c = make (rate);
+            setParam (*c, param, from); c->reset();
+            Buf L = sine (48000, 1000.0, rate, 0.01), R = L;
+            Buf ref = L; auto c2 = make (rate); setParam (*c2, param, from); c2->reset(); Buf r2 = ref; runModule (*c2, ref, r2);
+            Buf a (L.begin(), L.begin() + 24000), b (R.begin(), R.begin() + 24000);
+            runModule (*c, a, b);
+            setParam (*c, param, to);
+            Buf a2 (L.begin() + 24000, L.end()), b2 (R.begin() + 24000, R.end());
+            runModule (*c, a2, b2);
+            Buf all = a; all.insert (all.end(), a2.begin(), a2.end());
+            // pente maximale autour du changement vs pente maximale en régime établi (du même signal)
+            double changeSlope = 0.0, steady = 0.0;
+            for (std::size_t i = 24000; i < 26000; ++i) changeSlope = std::max (changeSlope, std::abs (all[i] - all[i - 1]));
+            for (std::size_t i = 20000; i < 22000; ++i) steady = std::max (steady, std::abs (all[i] - all[i - 1]));
+            for (std::size_t i = 44000; i < 46000; ++i) steady = std::max (steady, std::abs (all[i] - all[i - 1]));   // après le changement (le gain peut avoir changé)
+            return changeSlope / steady;
+        };
+        check (clickRatio (P::gain, 3.0, 4.0) < 1.6, "Changement de cran de gain : pas de clic (pente ≤ 1,6× celle du sinus)", clickRatio (P::gain, 3.0, 4.0));
+        check (clickRatio (P::phase, 0.0, 3.0) < 1.6, "Changement de polarité : pas de clic", clickRatio (P::phase, 0.0, 3.0));
+        check (clickRatio (P::input, 0.0, 1.0) < 1.6, "Mic -> Inst/DI : transition sans clic", clickRatio (P::input, 0.0, 1.0));
+        check (clickRatio (P::hpf, 0.0, 2.0) < 1.6, "HPF Off -> 120 Hz : sans clic", clickRatio (P::hpf, 0.0, 2.0));
+        check (clickRatio (P::pad, 0.0, 1.0) < 1.6, "Pad : sans clic", clickRatio (P::pad, 0.0, 1.0));
+    }
+
+    // --- Saturation : propre au niveau nominal, plafond +24 dBu, voyant avant l'écrêtage.
+    {
+        auto c = make();
+        setParam (*c, P::gain, 4); c->reset();
+        const auto nominal = run (*c, 1000.0, -18.0);   // 0 dBu
+        check (toneDb (nominal.L, 3000.0, fs) - toneDb (nominal.L, 1000.0, fs) < -65.0, "Niveau nominal (0 dBu) : harmonique 3 < -65 dB", toneDb (nominal.L, 3000.0, fs) - toneDb (nominal.L, 1000.0, fs), "dB");
+        check (c->takeStatusPeak() < std::pow (10.0, (P::kClipLampDbu + P::kDbuToDbfs) / 20.0), "Voyant : vert au niveau nominal");
+
+        auto hot = make();
+        setParam (*hot, P::gain, 8); hot->reset();   // +24 dB net sur un sinus -6 dBFS : +18 dBFS avant l'étage
+        const auto o = run (*hot, 1000.0, -6.0);
+        double peak = 0.0; for (std::size_t i = o.L.size() / 2; i < o.L.size(); ++i) peak = std::max (peak, std::abs (o.L[i]));
+        check (peak < 2.2 && peak > 1.6, "Surcharge : l'étage plafonne autour de +24 dBu (+6 dBFS)", dbOf (peak) , "dBFS");
+        check (hot->takeStatusPeak() > std::pow (10.0, (P::kClipLampDbu + P::kDbuToDbfs) / 20.0), "Voyant : rouge en surcharge");
+        auto mid = make();
+        setParam (*mid, P::gain, 6); mid->reset();   // +12 dB net : sinus -12 dBFS -> 0 dBFS (+18 dBu)
+        const auto m = run (*mid, 1000.0, -12.0);
+        const double thdMid = toneDb (m.L, 3000.0, fs) - toneDb (m.L, 1000.0, fs), thdHot = toneDb (o.L, 3000.0, fs) - toneDb (o.L, 1000.0, fs);
+        check (thdHot > thdMid + 10.0, "La distorsion croît avec le niveau (surcharge vs +18 dBu)", thdHot - thdMid, "dB de plus");
+    }
+
+    // --- 44,1 / 384 kHz : même gain, tenue DXD.
+    {
+        double g[2];
+        int k = 0;
+        for (double rate : { 44100.0, 384000.0 })
+        {
+            auto c = make (rate);
+            setParam (*c, P::gain, 6); c->reset();
+            g[k++] = gainDb (run (*c, 1000.0, -60.0, rate), 1000.0, rate);
+        }
+        check (std::abs (g[0] - g[1]) < 0.02, "Gain identique à 44,1 et 384 kHz", std::abs (g[0] - g[1]), "dB");
+        auto c = make (384000.0);
+        Buf L (384000), R; PortableGauss gs (5, 0.5); for (auto& v : L) v = gs(); R = L;
+        setParam (*c, P::gain, 10); runModule (*c, L, R);
+        bool finite = true; for (double v : L) finite = finite && std::isfinite (v);
+        check (finite, "Bruit fort, gain maximal à 384 kHz : sortie finie");
+    }
+}
+
+static void testLookahead()
+{
+    std::puts ("\n== 20. E9DS · Lookahead");
+    using E = AuraE9DS;
+    for (double fs : { 48000.0, 384000.0 })
+    {
+        E c; c.prepare (fs, 256);
+        setParam (c, E::lookahead, 2.0);   // 1 ms
+        check (c.getLatencySamples() == (int) std::lround (0.001 * fs), fs < 100000.0 ? "Lookahead 1 ms : latence annoncée = 48 échantillons (48 kHz)" : "Lookahead 1 ms : latence annoncée = 384 échantillons (384 kHz)", c.getLatencySamples());
+        setParam (c, E::lookahead, 0.0);
+        check (c.getLatencySamples() == 0, "Lookahead Off : latence 0");
+    }
+    {   // Sous le seuil : sortie = entrée retardée, bit pour bit.
+        const double fs = 96000.0;
+        E c; c.prepare (fs, 256);
+        setParam (c, E::lookahead, 3.0); c.reset();   // 2 ms
+        const int lat = c.getLatencySamples();
+        Buf x (96000); PortableGauss g (9, 0.003);
+        for (auto& v : x) v = g();
+        Buf y = x, r = x;
+        runModule (c, y, r);
+        double maxDiff = 0.0;
+        for (std::size_t i = (std::size_t) lat + 400; i < x.size(); ++i) maxDiff = std::max (maxDiff, std::abs (y[i] - x[i - (std::size_t) lat]));
+        check (maxDiff == 0.0, "Sous le seuil : sortie = entrée retardée de la latence annoncée, bit-identique (après le fondu de mise en place)", maxDiff);
+    }
+    {   // Le « t » très bref : le pic de sortie est plus bas avec Lookahead.
+        const double fs = 96000.0;
+        auto burstPeak = [&] (int look)
+        {
+            E c; c.prepare (fs, 256);
+            setParam (c, E::lookahead, look); setParam (c, E::range, 18.0); c.reset();
+            Buf x (48000, 0.0001);
+            const std::size_t t0 = 20000, len = (std::size_t) (0.004 * fs);   // « t » de 4 ms
+            for (std::size_t i = 0; i < len; ++i) x[t0 + i] = 0.5 * std::sin (dsp::kTwoPi * 6500.0 * (double) i / fs);
+            Buf y = x, r = x;
+            runModule (c, y, r);
+            const std::size_t a = t0 + (std::size_t) c.getLatencySamples(), b = a + (std::size_t) (0.0006 * fs);   // 0,6 ms de sortie du burst
+            double peak = 0.0;
+            for (std::size_t i = a; i < b; ++i) peak = std::max (peak, std::abs (y[i]));
+            return dbOf (peak);
+        };
+        const double off = burstPeak (0), look = burstPeak (3);
+        check (look < off - 2.0, "« t » de 4 ms à 6,5 kHz : crête des 0,6 premières ms de sortie plus basse avec Lookahead 2 ms", off - look, "dB de moins");
+    }
+    {   // Régime établi identique, quel que soit le cran, et même réduction à 48 et 384 kHz.
+        double gr[2];
+        int k = 0;
+        for (double fs : { 48000.0, 384000.0 })
+        {
+            E c; c.prepare (fs, 256);
+            setParam (c, E::lookahead, 2.0); c.reset();
+            Buf x = sine ((std::size_t) fs, 6500.0, fs, 0.25), r = x;
+            runModule (c, x, r);
+            gr[k++] = c.getGainReductionDb();
+        }
+        check (std::abs (gr[0] - gr[1]) < 0.2, "Lookahead : même réduction à 48 et 384 kHz", std::abs (gr[0] - gr[1]), "dB");
+    }
+    {   // Changement de cran en marche : pas de clic.
+        const double fs = 96000.0;
+        E c; c.prepare (fs, 256); c.reset();
+        Buf x = sine (96000, 1000.0, fs, 0.2), r = x;
+        Buf a (x.begin(), x.begin() + 48000), b (r.begin(), r.begin() + 48000);
+        runModule (c, a, b);
+        setParam (c, E::lookahead, 3.0);
+        Buf a2 (x.begin() + 48000, x.end()), b2 (r.begin() + 48000, r.end());
+        runModule (c, a2, b2);
+        a.insert (a.end(), a2.begin(), a2.end());
+        const double steady = maxStep (a, 40000, 46000), around = maxStep (a, 48000, 52000);
+        check (around < 1.3 * steady, "Changement de Lookahead en marche : fondu sans clic (pente ≤ 1,3× celle du sinus)", around / steady);
+    }
+    {   // Dans le moteur : latence relue à la volée, Dry compensé (une seule impulsion, amplitude exacte).
+        const double fs = 48000.0;
+        RackEngine e;
+        TestParams p;
+        p.bind (e);
+        e.prepare (fs, 512);
+        p.setType (e, 0, ModuleType::e9ds);
+        p.slots[0].mix = 50.0f;
+        p.setPlain (0, ModuleType::e9ds, E::lookahead, 2.0);   // 1 ms = 48 échantillons
+        Buf L (8192, 0.0), R;
+        L[1000] = 0.005;
+        R = L;
+        runEngine (e, L, R, 0, 2048, 512);   // laisse le moteur relire la latence et finir le fondu
+        check (e.getRequestedLatency() == 48, "Moteur : la latence du Lookahead est relue et annoncée (48)", e.getRequestedLatency());
+        Buf L2 (8192, 0.0), R2;
+        L2[4000] = 0.005; R2 = L2;
+        runEngine (e, L2, R2, 0, L2.size(), 512);
+        int count = 0; std::size_t at = 0;
+        for (std::size_t i = 0; i < L2.size(); ++i) if (std::abs (L2[i]) > 1.0e-6) { ++count; at = i; }
+        check (count == 1 && at == 4048 && std::abs (L2[4048] - 0.005) < 1.0e-12, "Moteur : Mix 50 % + Lookahead : une seule impulsion, amplitude exacte, à la latence", L2[at]);
+    }
+}
+
 int main (int argc, char** argv)
 {
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void (*)()> tests[] = {
         { "svf", testSvf }, { "eq", testEq }, { "comp", testComp }, { "duck", testDuck }, { "clip", testClip },
         { "limit", testLimit }, { "delay", testDelay }, { "verb", testVerb }, { "engine", testEngine },
-        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness },
+        { "stress", testStress }, { "move", testMoveSlot }, { "w9b", testW9b }, { "focus", testFocus }, { "l9a", testL9a }, { "rackmods", testRackModules }, { "e9ds", testE9ds }, { "loudness", testLoudness }, { "v9c3", testV9c3 }, { "v9p2", testV9p2 }, { "lookahead", testLookahead },
     };
     std::puts ("AuraRack — banc d'essai DSP (64 bits)");
     for (auto& [name, fn] : tests)

@@ -13,7 +13,8 @@ constexpr int kRemoveAction = 100, kBypassAction = 101;
 bool hasGainReduction (aura::ModuleType t)
 {
     return t == aura::ModuleType::comp || t == aura::ModuleType::duck || t == aura::ModuleType::limit
-        || t == aura::ModuleType::w9b || t == aura::ModuleType::l9a || t == aura::ModuleType::e9ds;
+        || t == aura::ModuleType::w9b || t == aura::ModuleType::l9a || t == aura::ModuleType::e9ds
+        || t == aura::ModuleType::v9c3;
 }
 }
 

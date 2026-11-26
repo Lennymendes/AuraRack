@@ -4,6 +4,7 @@
 
 #include "../Source/PluginEditor.h"
 #include "../Source/UI/E9dsFaceplate.h"
+#include "../Source/UI/VertigoFaceplate.h"
 #include "../Source/UI/L9aFaceplate.h"
 #include "../Source/UI/W9bFaceplate.h"
 
@@ -242,6 +243,16 @@ int main (int argc, char** argv)
             snapshot (compact, 240, 262, "e9ds-compact.png");
         }
         {
+            const auto keep5 = processor.getSlotModule (5), keep6 = processor.getSlotModule (6);
+            processor.setSlotModule (5, aura::ModuleType::v9c3); processor.setSlotModule (6, aura::ModuleType::v9p2);
+            aura::ui::VertigoFaceplate v3 (aura::ModuleType::v9c3, processor.getValueTreeState(), 5), v2 (aura::ModuleType::v9p2, processor.getValueTreeState(), 6);
+            v3.setBounds (0, 0, 1000, 385); v2.setBounds (0, 0, 1000, 385);
+            for (int i = 0; i < 120; ++i) { v3.tick (1.0f / 60.0f, { 9.0f, 0.0f, -4.0f }); v2.tick (1.0f / 60.0f, { 0.0f, 0.0f, 21.0f }); }
+            snapshot (v3, 1000, 385, "v9c3-wide.png");
+            snapshot (v2, 1000, 385, "v9p2-wide.png");
+            processor.setSlotModule (5, keep5); processor.setSlotModule (6, keep6);
+        }
+        {
             auto u = processor.getUiSettings();
             u.language = 0; u.loudness = false; u.selectedSlot = 9;
             processor.setUiSettings (u);
@@ -298,7 +309,12 @@ int main (int argc, char** argv)
         bindingCheck (l9, 8, 2, 3, "L9A");
         aura::ui::E9dsFaceplate e9 (processor.getValueTreeState(), 4);
         e9.setBounds (0, 0, 1000, 385);
-        bindingCheck (e9, 4, 5, 3, "E9DS");
+        bindingCheck (e9, 4, 6, 3, "E9DS (avec Lookahead)");
+        processor.setSlotModule (5, aura::ModuleType::v9c3); processor.setSlotModule (6, aura::ModuleType::v9p2);
+        aura::ui::VertigoFaceplate v3 (aura::ModuleType::v9c3, processor.getValueTreeState(), 5), v2 (aura::ModuleType::v9p2, processor.getValueTreeState(), 6);
+        v3.setBounds (0, 0, 1000, 385); v2.setBounds (0, 0, 1000, 385);
+        bindingCheck (v3, 5, 8, 3, "V9C3");
+        bindingCheck (v2, 6, 5, 5, "V9P2");
 
         // Auto Focus : en AUTO le potard Thresh n'est plus réglable (le moteur le pilote) ; en MANUAL il l'est de nouveau.
         auto& apvts = processor.getValueTreeState();

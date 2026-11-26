@@ -30,7 +30,7 @@ private:
 
     juce::AudioProcessorValueTreeState& apvts;
     const int slot;
-    std::array<PlateKnob, 5> knobs;
+    std::array<PlateKnob, 6> knobs;
     PlateSwitch modeSwitch, listenSwitch, bypassSwitch;
     std::unique_ptr<juce::ButtonParameterAttachment> modeAttachment, listenAttachment, bypassAttachment;
 

@@ -15,8 +15,8 @@ namespace aura
 {
 /** Types de module. L'ordre est celui du sélecteur de slot (0 = slot vide) et ne doit jamais changer : il est sauvegardé. */
 // L'ordre est persisté dans les sessions : on n'ajoute qu'à la fin.
-enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b, l9a, e9ds };
-inline constexpr int kNumModuleTypes = 11;
+enum class ModuleType : int { none = 0, eq, comp, duck, clip, limit, delay, verb, w9b, l9a, e9ds, v9c3, v9p2 };
+inline constexpr int kNumModuleTypes = 13;
 
 /** Nombre de paramètres génériques par slot (le module le plus riche en utilise 10). */
 inline constexpr int kMaxModuleParams = 10;
@@ -156,6 +156,10 @@ public:
     virtual void process (double* left, double* right, int numSamples, const SidechainBlock& key) noexcept = 0;
 
     virtual int getLatencySamples() const noexcept { return 0; }
+
+    /** Latence maximale que ce module peut annoncer à cette fréquence (dimensionne les lignes de compensation du moteur).
+        Le moteur relit getLatencySamples() à chaque tranche : un module à latence réglable (E9DS Lookahead) peut la changer. */
+    virtual int getMaxLatencySamples() const noexcept { return getLatencySamples(); }
 
     /** Réduction de gain courante en dB (>= 0), pour les indicateurs. */
     virtual double getGainReductionDb() const noexcept { return 0.0; }

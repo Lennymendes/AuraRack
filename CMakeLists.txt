@@ -84,7 +84,8 @@ if(AURA_BUILD_PLUGIN)
         Source/UI/Faceplate.cpp
         Source/UI/W9bFaceplate.cpp
         Source/UI/L9aFaceplate.cpp
-        Source/UI/E9dsFaceplate.cpp)
+        Source/UI/E9dsFaceplate.cpp
+        Source/UI/VertigoFaceplate.cpp)
 
     target_compile_definitions(AuraRack PUBLIC
         JUCE_WEB_BROWSER=0
@@ -140,7 +141,8 @@ if(AURA_BUILD_PLUGIN AND AURA_BUILD_TESTS)
         Source/UI/Faceplate.cpp
         Source/UI/W9bFaceplate.cpp
         Source/UI/L9aFaceplate.cpp
-        Source/UI/E9dsFaceplate.cpp)
+        Source/UI/E9dsFaceplate.cpp
+        Source/UI/VertigoFaceplate.cpp)
     target_compile_definitions(aurarack_ui_test PRIVATE
         JucePlugin_Name="AuraRack"
         JUCE_WEB_BROWSER=0

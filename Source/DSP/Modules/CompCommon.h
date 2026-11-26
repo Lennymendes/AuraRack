@@ -157,6 +157,51 @@ private:
     double x1[2] {}, dcX[2] {}, dcY[2] {};
 };
 
+/**
+    Étage de saturation douce à gain petit signal unitaire et à « raideur » réglable : y = (tanh(a·x + b) − tanh b) / (a·(1 − tanh² b)).
+    `a` petit = presque linéaire (plafond ≈ 1/a), `a` grand = harmoniques plus présents ; `b` donne un peu d'harmonique 2 (étage discret).
+    Mêmes règles que TubeStage : évaluation directe en DXD, ADAA du 1er ordre sous 176,4 kHz, blocage du continu à 5 Hz.
+    `a` peut varier échantillon par échantillon (la primitive utilise la valeur courante des deux côtés : écart négligeable
+    pour une variation lente).
+*/
+struct SatStage
+{
+    void prepare (double sampleRate, double drive, double bias) noexcept
+    {
+        direct = sampleRate >= dsp::kOversamplingOffRate;
+        dcR = std::exp (-2.0 * dsp::kPi * 5.0 / sampleRate);
+        b = bias;
+        tb = std::tanh (b);
+        setDrive (drive);
+    }
+    void setDrive (double newA) noexcept { a = std::max (newA, 1.0e-3); k0 = a * (1.0 - tb * tb); }
+    void reset() noexcept { for (auto& v : x1) v = 0.0; for (auto& v : dcX) v = 0.0; for (auto& v : dcY) v = 0.0; }
+
+    double process (double x, int ch) noexcept
+    {
+        const auto c = (std::size_t) ch;
+        double y;
+        if (direct)
+            y = (std::tanh (a * x + b) - tb) / k0;
+        else
+        {
+            const double dx = x - x1[c];
+            y = std::abs (dx) > 1.0e-9 ? (primitive (x) - primitive (x1[c])) / dx : (std::tanh (a * (0.5 * (x + x1[c])) + b) - tb) / k0;
+            x1[c] = x;
+        }
+        const double out = y - dcX[c] + dcR * dcY[c];
+        dcX[c] = y; dcY[c] = out;
+        return out;
+    }
+
+private:
+    double primitive (double x) const noexcept { return (compdetail::logCosh (a * x + b) / a - tb * x) / k0; }
+
+    bool direct = false;
+    double a = 0.1, b = 0.0, tb = 0.0, k0 = 0.1, dcR = 0.0;
+    double x1[2] {}, dcX[2] {}, dcY[2] {};
+};
+
 /** Plafond doux de L-Comp : identité jusqu'à -1 dBFS puis saturation tanh vers 0 dBFS (C¹), ADAA 1er ordre. */
 struct SoftCeiling
 {

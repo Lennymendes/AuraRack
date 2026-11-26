@@ -10,7 +10,7 @@ using namespace colours;
 namespace
 {
     /** Modules qui rapportent une réduction de gain (les autres n'ont pas d'oscilloscope). */
-    bool hasGainReduction (aura::ModuleType t) { return t == aura::ModuleType::comp || t == aura::ModuleType::duck || t == aura::ModuleType::limit; }
+    bool hasGainReduction (aura::ModuleType t) { return t == aura::ModuleType::comp || t == aura::ModuleType::duck || t == aura::ModuleType::limit || t == aura::ModuleType::v9c3; }
 }
 
 SlotComponent::SlotComponent (int slotIndex, AuraRackProcessor& p, SlotDragHost& host)
