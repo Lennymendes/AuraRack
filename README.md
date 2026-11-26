@@ -1,4 +1,4 @@
-# AuraRack 0.3 — NextDSP · rack multi-effets DXD (VST3 / AU)
+# AuraRack 1.0 — NextDSP · rack multi-effets DXD (VST3 / AU)
 
 Rack modulaire de mixage / mastering : **10 slots en série**, réordonnables à chaud, **12 modules** DSP natifs,
 traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marque **NextDSP**, suite **AuraSuite**
@@ -6,7 +6,7 @@ traitement intégral en **64 bits** de 44,1 kHz au **DXD 352,8 / 384 kHz**. Marq
 
 C++20 · JUCE 8.0.15 (la même version qu'AuraEngine / AuraDAW) · VST3 (macOS, Windows, Linux) + AU (macOS).
 
-**État** : Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**, **V9C3**, **V9P2**) en plus des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
+**État** : **version complète (candidate finale, à valider en DAW)** : Étape 5 (auto-gain, A / B, presets d'usine, utilitaire Stéréo / Largeur / Mono grave, latence totale et CPU en barre) en plus de l'Étape 4 (disposition type T-RackS, menu ⚙️ FR / EN, mesure LUFS, module **E9DS**, **V9C3**, **V9P2**) et des Étapes 1, 2 et 3 du cahier des charges : processeur, bus Sidechain, moteur de rack lock-free, 9 modules,
 **AuraComp à 3 algorithmes** (Aura-Opto, Aura-Tube, L-Comp), **éditeur NextDSP** (anthracite `#0B0C10`, zone haute « module actif » + bande de chaîne
 de 10 tuiles, glisser-déposer, réduction de gain et niveaux en direct), et deux modules à façade dédiée : **W9BMK1** (CL 1B, avec
 **Auto Focus**) et **L9A** (LA-2A) ; **E9DS** (de-esser, avec Lookahead), **V9C3** (compresseur VCA à Auto Focus) et **V9P2** (préampli double canal) complètent la liste. Voir aussi `AuraRack-Checklist-DAW.md` (séance de validation en DAW).
@@ -32,16 +32,19 @@ ctest --test-dir build -C Release --output-on-failure   # banc DSP + hôte VST3
 | `Source/DSP/AuraDspCore.h` | SVF TPT, lisseurs, rampes, ligne de retard (Lagrange 3e ordre, reset O(1)), sur-échantillonneur polyphase, minimum glissant |
 | `Source/DSP/AuraModuleDSP.h` | Classe de base `AuraModuleDSP`, description des paramètres (`ParamSpec`, `ModuleInfo`), bus de clé |
 | `Source/DSP/Modules/` | `AuraEQ`, `AuraComp`, `AuraDuck`, `AuraClip`, `AuraLimit`, `AuraDelay`, `AuraVerb`, `AuraW9B`, `AuraL9A`, `AuraE9DS`, `AuraV9C3`, `AuraV9P2` |
+| `Source/DSP/AutoGain.h` | Compensation de gain automatique (`LevelMatcher`) : par module et pour le rack |
+| `Source/DSP/StereoUtility.h` | Utilitaire Stéréo / Largeur / Mono grave (Mid / Side, Linkwitz-Riley 4e ordre) |
+| `Source/Presets.h` | Presets d'usine (Voix, Piano / Acoustique, Bus, Mastering) |
 | `Source/DSP/LoudnessMeter.h` | Mesure de sonie BS.1770-4 / EBU R128 (momentané, court terme, intégré, LRA, crête), sans JUCE, sans allocation |
 | `Source/DSP/ModuleRegistry.h` | Métadonnées par type, fabrique |
 | `Source/Engine/RackEngine.*` | Moteur du rack : 10 slots, ordre atomique, échanges de modules, bypass, Mix compensé, Dry maître |
-| `Source/Parameters.*` | Disposition APVTS (154 paramètres), textes qui suivent le module du slot |
+| `Source/Parameters.*` | Disposition APVTS (168 paramètres), textes qui suivent le module du slot |
 | `Source/PluginEditor.*` | Éditeur : une seule horloge `VBlankAttachment`, contenu 1280 × 780 mis à l'échelle |
 | `Source/UI/` | `NextLookAndFeel` (vectoriel), `ChainStrip` (bande de chaîne + glisser-déposer), `InspectorView` (zone haute), `SlotComponent`, `TopBar` (+ bouton ⚙️), `SettingsPanel`, `LoudnessBar`, `I18n.h` (dictionnaire FR / EN), `Widgets.h`, `FaceplateKit` (potard, interrupteur, VU, plaque), `Faceplate` (interface + fabrique), `W9bFaceplate`, `L9aFaceplate`, `E9dsFaceplate`, `VertigoFaceplate` (V9C3 + V9P2) |
 | `Source/PluginProcessor.*` | Bus principal + Sidechain, traitement float / double, état, latence, CPU |
-| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (248 vérifications) |
-| `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (14 vérifications) |
-| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel (27 vérifications) |
+| `Tests/DspSelfTest.cpp` | Banc DSP, moteur et stress multi-thread, sans JUCE (270 vérifications) |
+| `Tests/HostTest.cpp` | Hôte VST3 : charge le binaire compilé comme un DAW (16 vérifications) |
+| `Tests/UiTest.cpp` | Éditeur sans fenêtre : glisser-déposer, resynchronisation, rafale de `moveSlot`, sélection / bypass / retrait / ajout, réglages ⚙️ et session restaurée, rendu PNG, liaison de chaque contrôle de façade à un paramètre réel, A / B, presets, session, cohérence des 12 modules (52 vérifications) |
 
 ## Architecture audio
 
@@ -302,6 +305,51 @@ Dual : le canal faible reste intact ; M/S : Mid −4 dB et plus, Side ±0,3 dB ;
 - Façade : barre de niveau d'entrée en dBu (le module publie la crête **avant** l'étage de saturation), voyants Signal (vert) / Clip
   (rouge), gain net affiché ; R Offset estompé en mode Linked.
 
+## Étape 5 : gain staging, A / B, presets, utilitaire stéréo, suivi latence / CPU
+
+### Auto-gain (`Source/DSP/AutoGain.h`)
+
+Compensation de gain **par module** (bouton `AGC` dans l'en-tête du module, paramètre `sN_agc`) et **pour le rack entier**
+(bouton `AUTO GAIN` de la barre, paramètre `auto_gain`). Le niveau **RMS** de sortie est ramené à celui de l'entrée : mesure
+sur les deux voies (constante 0,4 s), correction lissée sur 1 s, **limitée à ±12 dB**, appliquée par rampe sur chaque tranche
+(aucun saut). Il suit donc les changements de ratio, de saturation, de Make-Up ou d'activation, **lentement** (≈ 5 s pour se
+caler à 0,3 dB). Garde-fous : **porte à −60 dBFS** (sur un silence ou un creux la correction est gelée : pas de remontée du
+bruit, pas de pompage), le **gain acquis est conservé en bypass**, le retrait de l'option ramène à 0 dB par rampe ;
+**option désactivée = aucune multiplication, rien n'est mesuré** (sortie bit-identique, coût nul). Un changement de type de
+module remet la correction à 0 dB. L'en-tête affiche la correction acquise (« AGC −3,2 »). **C'est une égalisation de niveau
+RMS, pas de sonie (LUFS)** ; pour la sonie, voir le mètre LUFS. Mesuré : +9 dB de module ramenés à ±0,3 dB en 10 s, réglage
+changé de +6 à −6 dB recalé, plafond ±12 dB, silence de 5 s sans dérive (< 0,01 dB), bypass sans perte du gain, rack à
++12 dB cumulés compensé.
+
+### A / B, presets, snapshots
+
+- **A / B** (boutons de la barre) : deux **configurations complètes du rack** (modules, réglages, auto-gain, utilitaire, ordre
+  des slots). Un clic bascule ; B part d'une copie de A ; `A>B` / `B>A` copie la configuration courante vers l'autre
+  emplacement. Les retouches de l'emplacement quitté sont conservées. Les deux emplacements sont **enregistrés dans la
+  session** (nœud `AB` de l'état ; état version 4) ; une session d'une version antérieure s'ouvre avec A actif et B vide.
+  Le changement installe d'abord les modules, puis les réglages (fondus de module du moteur : pas de clic).
+- **Presets d'usine** (menu `PRESET`) : **Voix** (préampli HPF 80 Hz, E9DS Lookahead 1 ms, V9C3 Auto Focus 4 dB, EQ),
+  **Piano / Acoustique** (préampli, EQ doux, L9A, salle courte), **Bus** (EQ de nettoyage, V9C3 de cohésion RMS Auto Slow,
+  écrêteur léger) et **Mastering** (EQ large, V9C3 Auto Focus 1,5 dB, E9DS, limiteur True Peak −1 dBTP, mono grave 100 Hz),
+  plus « Rack vide ». Les valeurs sont des **points de départ établis par mesure, pas à l'écoute** : à affiner. La barre
+  affiche le preset chargé, avec `*` s'il a été retouché. Le preset est enregistré avec la session ; l'écart se recalcule à la
+  réouverture. Charger un preset écrase le rack courant (utiliser A / B pour garder l'ancien).
+
+### Utilitaire Stéréo / Largeur / Mono grave (`Source/DSP/StereoUtility.h`)
+
+Fin de rack (avant le gain de sortie), en Mid / Side : **Width** 0–200 % (Side), **Bass Mono** (Off / 60 / 100 / 150 / 250 Hz :
+le **Side** passe par un passe-haut Linkwitz-Riley 4e ordre, le Mid n'est pas touché), **Mono** (Side = 0), tous lissés
+(20 ms), automatisables. **Width 100 %, Bass Mono Off, Mono Off : sortie bit-identique.** Mesuré : −6 dB à la coupure, plus de
+35 dB deux octaves dessous, Side intact au-dessus, même résultat à 44,1 et 384 kHz, Mid grave inchangé et toujours mono,
+sans clic. Un indicateur de **corrélation de phase L / R** (−1 … +1, lissé 0,3 s) est affiché dans la barre.
+
+### Barre supérieure
+
+Deux rangées. Rangée 1 : titre, Input / Output / Master Mix, Sidechain, niveaux, fréquence (DXD), **CPU**, ⚙️. Rangée 2 :
+presets, A / B, **Auto Gain** du rack, utilitaire stéréo (Width, Bass Mono, Mono, corrélation) et **latence totale**
+(échantillons + ms, avec la PDC de tous les modules : Lookahead du E9DS, limiteur…). La latence affichée est celle du moteur ;
+elle est transmise à l'hôte par le minuteur du processeur (≈ 30 ms). Le CPU est le temps de calcul / durée du bloc, lissé.
+
 ## Ajouter un module au rack
 
 1. **DSP** : une classe `AuraXxx : AuraModuleDSP` avec `info()` (`ParamSpec`), `setParameter`, `process`, `reset`, et au besoin
@@ -352,7 +400,7 @@ Dual : le canal faible reste intact ; M/S : Mid −4 dB et plus, Side ±0,3 dB ;
 
 ## Bancs d'essai
 
-`aurarack_dsp_test` (sans JUCE, 248 vérifications), `aurarack_host_test` (hôte VST3, 14) et `aurarack_ui_test` (éditeur, 27) : tout passe
+`aurarack_dsp_test` (sans JUCE, 270 vérifications), `aurarack_host_test` (hôte VST3, 16) et `aurarack_ui_test` (éditeur, 52) : tout passe
 (Linux GCC 13, et CI macOS / Windows / Linux). Le banc DSP passe aussi sous **ThreadSanitizer** (stress : le message thread change
 modules, ordre, paramètres et bypass en rafale pendant que le thread audio tourne à 384 kHz : aucune course) et sous
 **AddressSanitizer + UBSan** (aucune erreur, aucune fuite).
@@ -406,6 +454,10 @@ dans l'état (`order="0,1,…"`).
 - **V9C3** : **Threshold, Ratio, Attack, Release, Make-Up et Focus sont communs aux deux voies** en Dual et M/S (pas de réglages séparés par voie) ; **pas de compensation d'égale sonie** au changement de Ratio ; les modèles « transformateur » et « étage symétrique » sont des approximations calibrées par mesure, pas une comparaison avec le matériel ; Soft utilise une approximation (ratio 4, sans genou) dans l'Auto Focus (validé à ±1,5 dB).
 - **V9P2** : le Gain est **relatif à 36 dB** (pas de gain micro réel) ; **48V = indicateur seulement** ; pas d'impédance d'entrée ni de modèle de micro ; transformateur et étage en saturation douce, **non comparés au matériel**.
 - **Validation DAW** : V9C3, V9P2, le Lookahead E9DS et les façades n'ont **pas** été essayés dans un vrai DAW : suivre `AuraRack-Checklist-DAW.md`.
+- **Auto-gain** : égalisation de niveau RMS (pas de sonie), lente par construction (≈ 5 s), limitée à ±12 dB, gelée sous −60 dBFS ; sur du matériel très dynamique elle peut gommer l'effet voulu d'un compresseur de caractère (à utiliser pour comparer, pas systématiquement).
+- **Presets** : points de départ établis par mesure, **non écoutés** ; ils écrasent le rack (A / B pour comparer). Pas de presets utilisateur nommés (A / B et la session font office de snapshots).
+- **Utilitaire stéréo** : un seul réglage pour tout le rack, en fin de chaîne ; la corrélation est une mesure large bande (pas de vectorscope).
+- **Latence** : la valeur affichée est celle du moteur ; l'hôte la reçoit par le minuteur (≈ 30 ms de retard). Changer de Lookahead en lecture change la latence : la plupart des DAW recalent à l'arrêt / reprise.
 - **LUFS** : crête échantillon seulement (pas de true-peak) ; l'intégrée est lue par histogramme à pas de 0,1 LU (écart ≤ 0,03 LU mesuré) ; la mesure suit la sortie du rack, avant le traitement de l'hôte.
 - **Interface T-RackS** : vérifiée par rendu PNG et événements souris simulés ; les menus contextuels (ajout / retrait) et la bulle ⚙️ s'ouvrent via JUCE et n'ont pas été exercés dans un vrai DAW ; les cartes génériques (AuraEQ…) sont lisibles mais sans courbes.
 - **Auto Focus** : lent par construction (≈ 10 s pour se caler après un changement de programme) ; le Threshold manuel est ignoré pendant l'Auto ; testé sur une parole synthétique et un sinus, pas sur du matériel musical varié : à valider à l'écoute (percussions, mix complet).
