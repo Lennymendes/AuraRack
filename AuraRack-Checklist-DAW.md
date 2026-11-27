@@ -1,7 +1,7 @@
 # AuraRack — Checklist de validation en DAW
 
 Objectif : ce qui n'a **pas** pu être vérifié par les bancs automatiques (écoute, hôtes réels, ergonomie). Cocher et noter l'hôte,
-l'OS, la fréquence d'échantillonnage et la version (commit) testés. Les bancs (DSP 248, hôte VST3 14, UI 27) passent, mais aucun
+l'OS, la fréquence d'échantillonnage et la version (commit) testés. Les bancs (DSP 362, hôte VST3 16, UI 56) passent, mais aucun
 n'a tourné dans un vrai DAW.
 
 **Préparation** : installer `AuraRack.vst3`, ouvrir une session 48 kHz (puis refaire les points marqués ★ à 44,1 / 96 / 384 kHz),
@@ -58,10 +58,7 @@ latence de lecture ≥ 256 éch., un second plugin de référence (compresseur /
 - [ ] **Utilitaire stéréo** : Width 0 % = mono, 200 % = très large (surveiller la compatibilité mono) ; **Bass Mono** 100 / 150 Hz sur un kick / basse stéréo : le grave se centre, aucune coloration du centre ; Mono : bascule sans clic ; **corrélation** : proche de +1 sur une source mono, négative sur un signal en opposition de phase.
 - [ ] **Latence / CPU** : la **latence totale** de la barre = latence rapportée par le DAW (PDC) ; elle change avec le Lookahead du E9DS (1 ms à 48 kHz = 48 éch.) ; la piste reste alignée avec une référence ; le **CPU** de la barre ressemble à celui du DAW (à 384 kHz, 10 modules).
 
-## Notes à relever
-Pour chaque échec : hôte + version, OS, fréquence, buffer, module, réglages, lecture / offline, description (clic, dérive, latence, crash), et si reproductible.
-
-## 4. Nouveaux modules (F976, D9X, AuraSculpt, AuraTone) et V9C3 / V9P2 revus
+## 7. Nouveaux modules (F976, D9X, AuraSculpt, AuraTone) et V9C3 / V9P2 revus
 - [ ] **V9C3** à 1–3 dB de réduction : transparent (transitoires et image stéréo intactes) ; la distorsion n'apparaît qu'en comprimant fort ; aucun épaississement du bas-médium, aucune perte d'aigus.
 - [ ] **V9P2** : plus de 48V ; **Mic** (JT-16 + Twin OPA) plus ouvert / riche que **Inst/DI** ; sortie propre jusqu'à +21 dBu.
 - [ ] **F976** : Rev A plus colorée que Rev D/E ; Attack 20 → 800 µs (affichée en µs) sans clic ; Release 50 ms → 1,1 s ; Ratio 4 / 8 / 12 / 20 et **ALL** (pompage musical) ; SC HPF ; Meter GR / +4 / +8 (affichage).
@@ -69,3 +66,7 @@ Pour chaque échec : hôte + version, OS, fréquence, buffer, module, réglages,
 - [ ] **AuraSculpt** : Attack / Sustain sur une batterie ou un piano (niveau constant en régime établi), Focus + Focus Amount, Ceiling.
 - [ ] **AuraTone** : Body / Air / Tilt à l'oreille, Even / Odd (doses croissantes), sortie neutre à zéro.
 - [ ] Les quatre modules à 44,1, 96 et 384 kHz : mêmes réglages, même rendu ; Auto-Gain, A / B, presets, sauvegarde / rechargement de session.
+
+## Notes à relever
+Pour chaque échec : hôte + version, OS, fréquence, buffer, module, réglages, lecture / offline, description (clic, dérive, latence, crash), et si reproductible.
+
